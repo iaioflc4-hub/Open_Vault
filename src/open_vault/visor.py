@@ -13,6 +13,7 @@ sin sumar ningún proceso que consuma RAM.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -29,6 +30,8 @@ from .vault import ATTACHMENTS_DIR
 
 EXTENSIONES_VIDEO = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
 ARCHIVOS_DE_LA_VISTA = ("config-mathjax.js", "iniciar.js", "estilo.css")
+# Nombre del archivo donde el build deja la huella del visor que lo generó.
+HUELLA_VISOR = ".openvault-visor"
 
 # Se bajan una sola vez y quedan en el repo: el sitio no depende de ningún CDN.
 ASSETS_REMOTOS = {
@@ -289,6 +292,9 @@ def construir(config: ConfiguracionVisor) -> Path:
         )
         if resultado.returncode:
             raise RuntimeError(f"mkdocs falló:\n{resultado.stdout[-1500:]}\n{resultado.stderr[-1500:]}")
+
+    salida.mkdir(parents=True, exist_ok=True)
+    (salida / HUELLA_VISOR).write_text(_huella_del_visor(config.assets), encoding="utf-8")
     return salida
 
 
@@ -352,20 +358,36 @@ extra:
 """
 
 
-def _hay_cambios(vault: Path, salida: Path, assets: Path) -> bool:
-    """¿Hay que regenerar? Se mira el vault y también el propio visor.
+def _huella_del_visor(assets: Path) -> str:
+    """Huella del traductor y de los archivos de la vista.
 
-    Sin lo segundo, actualizar el traductor o los estilos dejaría el sitio viejo
-    para siempre, porque el vault no cambió.
+    Se compara por contenido y no por fecha: con fechas, un archivo del visor
+    tocado por cualquier motivo haría creer que hay que regenerar, y una
+    actualización del código podía quedar sin efecto sin que nadie lo note.
     """
+    huella = hashlib.sha256()
+    piezas = [
+        Path(__file__),
+        *(assets / nombre for nombre in ARCHIVOS_DE_LA_VISTA),
+        *(assets / nombre for nombre in ASSETS_REMOTOS),
+    ]
+    for pieza in piezas:
+        huella.update(pieza.name.encode("utf-8"))
+        if pieza.is_file():
+            huella.update(pieza.read_bytes())
+    return huella.hexdigest()[:16]
+
+
+def _hay_cambios(vault: Path, salida: Path, assets: Path) -> bool:
+    """¿Hay que regenerar? Se mira el vault y también el propio visor."""
     marca = salida / "index.html"
     if not marca.is_file():
         return True
     momento = marca.stat().st_mtime
     if any(nota.stat().st_mtime > momento for nota in _notas_del_vault(vault)):
         return True
-    piezas = [Path(__file__), *(assets / nombre for nombre in ARCHIVOS_DE_LA_VISTA), *(assets / nombre for nombre in ASSETS_REMOTOS)]
-    return any(pieza.is_file() and pieza.stat().st_mtime > momento for pieza in piezas)
+    registro = salida / HUELLA_VISOR
+    return not registro.is_file() or registro.read_text(encoding="utf-8").strip() != _huella_del_visor(assets)
 
 
 def main(argv: list[str] | None = None) -> int:

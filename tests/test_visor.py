@@ -8,48 +8,55 @@ from pathlib import Path
 
 from open_vault.visor import convertir_markdown
 
-MKDOCS_DISPONIBLE = importlib.util.find_spec("mkdocs") is not None
+VISTA_DISPONIBLE = importlib.util.find_spec("material") is not None
 
 
 class CambiosTests(unittest.TestCase):
-    def test_rebuilds_when_the_vault_is_newer_than_the_site(self) -> None:
+    def _sitio_al_dia(self, raiz: Path) -> tuple[Path, Path, Path]:
+        from open_vault.visor import HUELLA_VISOR, _huella_del_visor
+
+        vault, salida, assets = raiz / "vault", raiz / "sitio", raiz / "assets"
+        vault.mkdir()
+        assets.mkdir()
+        assets.joinpath("estilo.css").write_text("", encoding="utf-8")
+        salida.mkdir()
+        (salida / "index.html").write_text("<html></html>", encoding="utf-8")
+        (salida / HUELLA_VISOR).write_text(_huella_del_visor(assets), encoding="utf-8")
+        return vault, salida, assets
+
+    def test_builds_when_there_is_no_site_yet(self) -> None:
         from open_vault.visor import _hay_cambios
 
         with tempfile.TemporaryDirectory() as temp:
             raiz = Path(temp)
-            vault = raiz / "vault"
-            vault.mkdir()
-            salida = raiz / "sitio"
-            assets = raiz / "assets"
-            assets.mkdir()
-            self.assertTrue(_hay_cambios(vault, salida, assets), "sin sitio generado hay que construir")
+            (raiz / "vault").mkdir()
+            (raiz / "assets").mkdir()
+            self.assertTrue(_hay_cambios(raiz / "vault", raiz / "sitio", raiz / "assets"))
 
-            salida.mkdir()
-            (salida / "index.html").write_text("<html></html>", encoding="utf-8")
-            assets.joinpath("estilo.css").write_text("", encoding="utf-8")
-            self.assertFalse(_hay_cambios(vault, salida, assets), "sin cambios no se regenera")
+    def test_does_nothing_when_nothing_changed(self) -> None:
+        from open_vault.visor import _hay_cambios
 
+        with tempfile.TemporaryDirectory() as temp:
+            vault, salida, assets = self._sitio_al_dia(Path(temp))
+            self.assertFalse(_hay_cambios(vault, salida, assets))
+
+    def test_a_new_capture_triggers_a_rebuild(self) -> None:
+        from open_vault.visor import _hay_cambios
+
+        with tempfile.TemporaryDirectory() as temp:
+            vault, salida, assets = self._sitio_al_dia(Path(temp))
             nota = vault / "nueva.md"
             nota.write_text("# Nueva\n", encoding="utf-8")
-            os.utime(nota, (nota.stat().st_mtime + 60, nota.stat().st_mtime + 60))
-            self.assertTrue(_hay_cambios(vault, salida, assets), "una captura nueva dispara el rebuild")
+            momento = nota.stat().st_mtime + 60
+            os.utime(nota, (momento, momento))
+            self.assertTrue(_hay_cambios(vault, salida, assets))
 
-    def test_touching_the_visor_also_triggers_a_rebuild(self) -> None:
+    def test_touching_the_visor_triggers_a_rebuild(self) -> None:
         from open_vault.visor import _hay_cambios
 
         with tempfile.TemporaryDirectory() as temp:
-            raiz = Path(temp)
-            vault = raiz / "vault"
-            vault.mkdir()
-            salida = raiz / "sitio"
-            salida.mkdir()
-            (salida / "index.html").write_text("<html></html>", encoding="utf-8")
-            assets = raiz / "assets"
-            assets.mkdir()
-            estilo = assets / "estilo.css"
-            estilo.write_text("", encoding="utf-8")
-            futuro = (salida / "index.html").stat().st_mtime + 60
-            os.utime(estilo, (futuro, futuro))
+            vault, salida, assets = self._sitio_al_dia(Path(temp))
+            assets.joinpath("estilo.css").write_text("/* cambio */", encoding="utf-8")
             self.assertTrue(_hay_cambios(vault, salida, assets))
 
 
@@ -59,7 +66,7 @@ class ConversionTests(unittest.TestCase):
         self.assertIn("![ficha](../../Attachments/ficha.svg)", salida)
 
     def test_attachment_embed_at_root_has_no_parent_segments(self) -> None:
-        self.assertIn("![](Attachments/ficha.svg)", convertir_markdown("![[Attachments/ficha.svg]]"))
+        self.assertIn("![ficha](Attachments/ficha.svg)", convertir_markdown("![[Attachments/ficha.svg]]"))
 
     def test_video_embed_is_replaced_by_a_notice(self) -> None:
         salida = convertir_markdown("![[Attachments/video.mp4]]")
@@ -103,7 +110,7 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(convertir_markdown(nota), nota)
 
 
-@unittest.skipUnless(MKDOCS_DISPONIBLE, "mkdocs-material no está instalado (extra `visor`)")
+@unittest.skipUnless(VISTA_DISPONIBLE, "mkdocs-material no está instalado (extra `visor`)")
 class BuildTests(unittest.TestCase):
     def test_builds_a_site_from_a_small_vault(self) -> None:
         from open_vault.visor import ConfiguracionVisor, construir
