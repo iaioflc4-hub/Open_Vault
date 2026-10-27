@@ -101,7 +101,9 @@ def read_pdf(path: Path, folder: Path, *, language: str = "spa+eng") -> tuple[st
     texto = ""
     try:
         texto = text_of_pdf(path)
-    except (RuntimeError, ValueError, OSError):
+    except Exception:  # noqa: BLE001
+        # Un PDF corrupto puede explotar con excepciones propias de pypdf, y hay
+        # archivos rotos de verdad circulando. La promesa es no romper la captura.
         texto = ""
 
     if len(texto) >= 200 or not ocr_available() or not pdftoppm_available():

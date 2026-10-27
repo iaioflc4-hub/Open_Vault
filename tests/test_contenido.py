@@ -8,7 +8,7 @@ from open_vault.classify import UNCATEGORIZED, classify, classify_or
 from open_vault.enrich import hashtags, tags
 from open_vault.grafo import MAPA, TEMAS_DIR, tejer
 from open_vault.links import vtt_to_text, youtube_id
-from open_vault.pdf import pdf_available, text_of_pdf
+from open_vault.pdf import pypdf_available, text_of_pdf
 from open_vault.reclasificar import reclasificar
 from open_vault.vault import save_note, save_video_reference
 
@@ -130,13 +130,48 @@ class ReclasificarTests(unittest.TestCase):
 
 
 class PdfTests(unittest.TestCase):
-    def test_sin_lector_avisa_en_vez_de_fallar(self) -> None:
+    def test_un_pdf_roto_no_tira_abajo_la_captura(self) -> None:
+        """La promesa es que el bot nunca se cae leyendo un documento raro."""
+        from open_vault.pdf import read_pdf
+
         with tempfile.TemporaryDirectory() as temp:
             archivo = Path(temp) / "x.pdf"
-            archivo.write_bytes(b"%PDF-1.4 no es un pdf real")
-            if not pdf_available():
-                self.skipTest("no hay pypdf ni poppler instalados")
-            self.assertIsInstance(text_of_pdf(archivo), str)
+            archivo.write_bytes(b"%PDF-1.4 esto no es un pdf real")
+            texto, ocr, paginas = read_pdf(archivo, Path(temp) / "paginas")
+            self.assertEqual(texto, "")
+            self.assertEqual(ocr, "")
+
+    def test_lee_el_texto_de_un_pdf_de_verdad(self) -> None:
+        if not pypdf_available():
+            self.skipTest("pypdf no está instalado")
+        with tempfile.TemporaryDirectory() as temp:
+            archivo = Path(temp) / "real.pdf"
+            _pdf_con_texto(archivo, "Hola vault")
+            self.assertIn("Hola vault", text_of_pdf(archivo))
+
+
+def _pdf_con_texto(destino: Path, texto: str) -> None:
+    """Arma un PDF válido de una página con ese texto, para poder probarlo."""
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    escritor = PdfWriter()
+    pagina = escritor.add_blank_page(width=200, height=200)
+    fuente = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    pagina[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): escritor._add_object(fuente)})}
+    )
+    contenido = DecodedStreamObject()
+    contenido.set_data(f"BT /F1 12 Tf 20 100 Td ({texto}) Tj ET".encode("latin-1"))
+    pagina[NameObject("/Contents")] = escritor._add_object(contenido)
+    with destino.open("wb") as salida:
+        escritor.write(salida)
 
 
 if __name__ == "__main__":

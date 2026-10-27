@@ -18,29 +18,44 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from .reclasificar import CATEGORIAS_DIR, _campo, cuerpo_sin_encabezado, es_nota_de_captura
+from .enrich import hashtags
+from .reclasificar import _campo, es_nota_de_captura
 
 TEMAS_DIR = "Temas"
 MAPA = "Mapa del vault.md"
 MARCA = "<!-- openvault:temas -->"
 TAGS_RE = re.compile(r"^tags:\s*(\[.*\])\s*$", re.MULTILINE)
 CATEGORY_RE = re.compile(r'^category:\s*("?)(.*?)\1\s*$', re.MULTILINE)
-MAX_TEMAS_POR_NOTA = 8
+MAX_TEMAS_POR_NOTA = 6
 
 
-def etiquetas_de(texto: str) -> list[str]:
-    """Etiquetas del encabezado y, si no hay, la categoría: sirven las dos."""
-    etiquetas: list[str] = []
+def etiquetas_de(texto: str, *, palabras: int = 2) -> list[str]:
+    """Temas a los que se conecta una captura, en orden de importancia.
+
+    Manda lo que eligió la persona (`#etiqueta`), después el tema clasificado y
+    recién al final un par de palabras frecuentes. El motivo es el gráfico: con
+    las diez palabras del encabezado, cinco capturas generan veinte temas y el
+    mapa queda ilegible en vez de útil.
+    """
+    a_mano = hashtags(texto, limit=MAX_TEMAS_POR_NOTA)
+    categoria = _campo(texto, CATEGORY_RE).casefold()
+    del_encabezado: list[str] = []
     match = TAGS_RE.search(texto)
     if match:
         try:
-            etiquetas = [str(valor).strip().casefold() for valor in json.loads(match.group(1)) if str(valor).strip()]
+            del_encabezado = [
+                str(valor).strip().casefold() for valor in json.loads(match.group(1)) if str(valor).strip()
+            ]
         except ValueError:
-            etiquetas = []
-    categoria = _campo(texto, CATEGORY_RE).casefold()
-    if categoria and categoria not in {"por clasificar"}:
-        etiquetas.append(categoria)
-    limpias = [re.sub(r"[\[\]|#^]", "", etiqueta).strip() for etiqueta in etiquetas]
+            del_encabezado = []
+    elegidas = list(a_mano)
+    if categoria and categoria != "por clasificar":
+        elegidas.append(categoria)
+    for palabra in del_encabezado:
+        if len(elegidas) >= len(a_mano) + 1 + palabras:
+            break
+        elegidas.append(palabra)
+    limpias = [re.sub(r"[\[\]|#^]", "", etiqueta).strip() for etiqueta in elegidas]
     return list(dict.fromkeys(etiqueta for etiqueta in limpias if 2 <= len(etiqueta) <= 40))[
         :MAX_TEMAS_POR_NOTA
     ]
