@@ -46,6 +46,14 @@ class BarsTests(unittest.TestCase):
     def test_empty_input_still_produces_valid_xml(self) -> None:
         ET.fromstring(bars_svg(items=[]))
 
+    def test_long_values_stay_inside_the_chart(self) -> None:
+        svg = bars_svg(items=[("Inversión", 340_000_000_000), ("Cobertura", 87.5)])
+        ultimo = svg.strip().split("<text")[-1]
+        x = float(ultimo.split('x="')[1].split('"')[0])
+        # El texto del valor tiene que entrar en el ancho del SVG contando sus
+        # 15 caracteres a 9 px cada uno (fuente de 15 px).
+        self.assertLessEqual(x + 9 * len("340.000.000.000"), 880)
+
     def test_number_format_is_local(self) -> None:
         self.assertEqual(format_number(1234), "1.234")
         self.assertEqual(format_number(1234.5), "1.234,5")

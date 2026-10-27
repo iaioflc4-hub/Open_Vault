@@ -133,11 +133,20 @@ class BuildTests(unittest.TestCase):
             self.assertTrue((salida / "index.html").is_file())
             notas = list(salida.rglob("*.html"))
             self.assertGreaterEqual(len(notas), 2)
-            html = next(p for p in notas if "informe" in p.name.lower()).read_text(encoding="utf-8")
+            # Con `use_directory_urls` cada nota es una carpeta con su index.html,
+            # así que el nombre buscado está en la ruta, no en el nombre del archivo.
+            html = next(p for p in notas if "informe" in str(p).lower()).read_text(encoding="utf-8")
             self.assertIn("admonition", html)
             self.assertIn("Cobertura", html)
             self.assertIn("-ficha.svg", html)
             self.assertTrue(any(salida.rglob("*-ficha.svg")))
+
+            # Sin estas dos librerías los diagramas y las fórmulas salen como
+            # texto crudo: el sitio "funciona" pero no se entiende.
+            self.assertTrue((salida / "Attachments" / "mermaid.min.js").is_file())
+            self.assertTrue((salida / "Attachments" / "tex-mml-chtml.js").is_file())
+            self.assertIn("mermaid.min.js", html)
+            self.assertIn("tex-mml-chtml.js", html)
 
 
 if __name__ == "__main__":

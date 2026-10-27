@@ -123,7 +123,10 @@ def bars_svg(
     """Barras horizontales: sirve para cualquier dato con etiqueta y número."""
     rows = [(label, value) for label, value in items if value > 0][:max_items]
     label_width = 320
-    right_margin = 110
+    # El ancho de la columna de valores se calcula con el número más largo: si no,
+    # un dato como 340.000.000.000 se sale del gráfico y queda cortado.
+    texto_mas_largo = max((len(format_number(value)) for _, value in rows), default=3)
+    right_margin = min(max(110, 34 + 9 * texto_mas_largo), width - label_width - 40)
     top = 66
     row_height = 40
     height = top + row_height * len(rows) + 14

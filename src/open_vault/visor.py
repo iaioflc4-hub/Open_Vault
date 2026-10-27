@@ -229,12 +229,20 @@ def _portada_index(notas: list[Nota], base: str) -> str:
     return '<div class="ov-tarjetas">\n' + "\n".join(tarjetas) + "\n</div>"
 
 
-def _copiar_archivos_de_la_vista(assets: Path, destino: Path) -> None:
+def _copiar_archivos_de_la_vista(assets: Path, destino: Path) -> list[str]:
+    """Copia al sitio todos los archivos del visor: estilos **y** las librerías.
+
+    Si Mermaid o MathJax no viajan con el sitio, los diagramas y las fórmulas
+    quedan como texto crudo: se ven, pero no se entienden.
+    """
     destino.mkdir(parents=True, exist_ok=True)
-    for nombre in ARCHIVOS_DE_LA_VISTA:
-        origen = assets / nombre
-        if origen.is_file():
-            shutil.copy2(origen, destino / nombre)
+    copiados: list[str] = []
+    for origen in sorted(assets.iterdir()) if assets.is_dir() else []:
+        if not origen.is_file() or origen.name == "LEEME.txt":
+            continue
+        shutil.copy2(origen, destino / origen.name)
+        copiados.append(origen.name)
+    return copiados
 
 
 def bajar_assets(destino: Path) -> None:
@@ -273,7 +281,14 @@ def construir(config: ConfiguracionVisor) -> Path:
 
         adjuntos_docs = docs / ATTACHMENTS_DIR
         copiados = _copiar_adjuntos(vault, adjuntos_docs)
-        _copiar_archivos_de_la_vista(config.assets, adjuntos_docs)
+        archivos_de_la_vista = _copiar_archivos_de_la_vista(config.assets, adjuntos_docs)
+        faltantes = [nombre for nombre in ASSETS_REMOTOS if nombre not in archivos_de_la_vista]
+        if faltantes:
+            raise RuntimeError(
+                "Faltan archivos de la vista web: "
+                + ", ".join(faltantes)
+                + ". Corré `open-vault-visor --bajar-assets`."
+            )
 
         (docs / "index.md").write_text(
             "# Open_Vault\n\n"
