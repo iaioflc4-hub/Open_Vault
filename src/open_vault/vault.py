@@ -187,6 +187,12 @@ def save_note(
     return path
 
 
+def _duracion_texto(seconds: float) -> str:
+    if seconds >= 60:
+        return f"{int(seconds // 60)} min {int(seconds % 60)} s"
+    return f"{seconds:.1f} s"
+
+
 def save_video_reference(
     vault: Path,
     *,
@@ -194,26 +200,51 @@ def save_video_reference(
     source: str,
     thumbnail: str | None = None,
     local_file: str | None = None,
+    transcript: str | None = None,
+    on_screen_text: str | None = None,
+    duration: float | None = None,
 ) -> Path:
-    """Video: referencia, miniatura si hay ffmpeg y transcripción marcada como pendiente.
+    """Video: referencia, miniatura si hay ffmpeg y lo que se pudo leer del contenido.
 
-    No se envía el video a ningún servicio externo: eso solo pasaría si alguien
-    configura un proveedor de transcripción a propósito.
+    `transcript` viene de la transcripción local del audio y `on_screen_text` del
+    OCR de los cuadros. No se envía el video a ningún servicio externo: eso solo
+    pasaría si alguien configura un proveedor de transcripción a propósito.
     """
     host = urlparse(source).netloc
-    content = (
-        "## Referencia del video\n\n"
-        f"- URL original: {source}\n"
-        f"- Plataforma/dominio: {host}\n"
-        + (f"- Archivo local: {local_file}\n" if local_file else "")
-        + "\n## Transcripción pendiente\n\n"
-        "Pendiente de configurar el proveedor de transcripción. "
-        "El video no se envió a ningún servicio externo.\n"
-        "\n## Notas\n\n"
-        "Escribí acá lo que te interesa del video; la transcripción automática se "
-        "conecta el día que haya un proveedor elegido.\n"
-    )
+    lineas = [
+        "## Referencia del video",
+        "",
+        f"- URL original: {source}",
+        f"- Plataforma/dominio: {host}",
+    ]
+    if local_file:
+        lineas.append(f"- Archivo local: {local_file}")
+    if duration:
+        lineas.append(f"- Duración: {_duracion_texto(duration)}")
+    lineas.append("")
+    if transcript:
+        lineas += ["## Transcripción", "", transcript, ""]
+    else:
+        lineas += [
+            "## Transcripción pendiente",
+            "",
+            "Pendiente de configurar el proveedor de transcripción. "
+            "El video no se envió a ningún servicio externo.",
+            "",
+        ]
+    if on_screen_text:
+        lineas += ["## Texto en pantalla (leído de los cuadros)", "", on_screen_text, ""]
+    lineas += [
+        "## Notas",
+        "",
+        "Escribí acá lo que te interesa del video. Para que la transcripción sea "
+        "automática, activá `TRANSCRIPTION_ENGINE` en el `.env`.",
+    ]
+    content = "\n".join(lineas)
     attachments = [name for name in (thumbnail, local_file) if name]
+    metadata = {"platform": host}
+    if duration:
+        metadata["duration_seconds"] = round(duration, 1)
     return save_note(
         vault,
         title=title,
@@ -223,7 +254,7 @@ def save_video_reference(
         category="Videos",
         attachments=attachments,
         hero=thumbnail,
-        note_metadata={"platform": host},
+        note_metadata=metadata,
     )
 
 

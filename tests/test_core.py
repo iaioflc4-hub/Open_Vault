@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -7,8 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from open_vault.classify import classify
+from open_vault.config import load_settings
 from open_vault.extract import PageContent, validate_public_http_url
-from open_vault.media import is_video_url, video_thumbnail
+from open_vault.media import is_video_url, merge_ocr_texts, video_duration, video_frames, video_thumbnail
+from open_vault.transcribe import available as transcription_available
+from open_vault.transcribe import transcribe
 from open_vault.vault import render_attachment, save_note, save_text_note, save_video_reference
 
 
@@ -49,6 +53,73 @@ class ThumbnailTests(unittest.TestCase):
             video.write_bytes(b"no es un video")
             with patch("open_vault.media.shutil.which", return_value=None):
                 self.assertFalse(video_thumbnail(video, Path(temp) / "salida.jpg"))
+
+
+class VideoReadingTests(unittest.TestCase):
+    def test_ocr_merge_drops_repeated_and_short_lines(self) -> None:
+        merged = merge_ocr_texts(["Hola mundo\nOk\nHola mundo", "Otra linea"])
+        self.assertEqual(merged, "Hola mundo\nOtra linea")
+
+    def test_no_frames_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(video_frames(Path(temp) / "no-existe.mp4", Path(temp), 0), [])
+            self.assertEqual(video_frames(Path(temp) / "no-existe.mp4", Path(temp), 4), [])
+
+    def test_duration_is_none_without_a_readable_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertIsNone(video_duration(Path(temp) / "no-existe.mp4"))
+
+    def test_audio_extraction_refuses_missing_file(self) -> None:
+        from open_vault.media import extract_audio
+
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertFalse(extract_audio(Path(temp) / "no-existe.mp4", Path(temp) / "audio.wav"))
+
+
+class TranscriptionTests(unittest.TestCase):
+    def test_off_without_engine(self) -> None:
+        with patch.dict(os.environ, {"TRANSCRIPTION_ENGINE": ""}):
+            self.assertFalse(transcription_available())
+
+    def test_reports_the_engine_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            audio = Path(temp) / "audio.wav"
+            audio.write_bytes(b"RIFF")
+            with patch.dict(os.environ, {"TRANSCRIPTION_ENGINE": "faster-whisper"}):
+                with patch("open_vault.transcribe.importlib.util.find_spec", return_value=None):
+                    self.assertFalse(transcription_available())
+                    with self.assertRaisesRegex(RuntimeError, "no está instalado"):
+                        transcribe(audio)
+
+    def test_missing_audio_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(RuntimeError, "No existe el audio"):
+                transcribe(Path(temp) / "nada.wav")
+
+
+class SettingsTests(unittest.TestCase):
+    """La transcripción viene apagada y los topes se validan al arrancar."""
+
+    def leer(self, **entorno: str) -> object:
+        base = {"BOT_TOKEN": "123:abc", "ALLOWED_TELEGRAM_USER_IDS": "7"}
+        base.update(entorno)
+        with patch("open_vault.config.load_dotenv"), patch.dict(os.environ, base, clear=True):
+            return load_settings()
+
+    def test_defaults(self) -> None:
+        settings = self.leer()
+        self.assertEqual(settings.transcription_engine, "")
+        self.assertEqual(settings.transcription_model, "tiny")
+        self.assertEqual(settings.video_frames, 4)
+        self.assertTrue(settings.video_thumbnails)
+
+    def test_transcription_can_be_enabled(self) -> None:
+        settings = self.leer(TRANSCRIPTION_ENGINE="faster-whisper", TRANSCRIPTION_LANGUAGE="es")
+        self.assertEqual(settings.transcription_engine, "faster-whisper")
+
+    def test_absurd_frame_count_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.leer(VIDEO_FRAMES="99")
 
 
 class VideoDetectionTests(unittest.TestCase):
@@ -141,6 +212,24 @@ class VaultTests(unittest.TestCase):
             self.assertIn(source, saved)
             self.assertIn("Pendiente de configurar el proveedor de transcripción", saved)
             self.assertIn("![[Attachments/miniatura.jpg]]", saved)
+
+    def test_video_note_keeps_transcript_and_screen_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = save_video_reference(
+                Path(temp),
+                title="Charla grabada",
+                source="telegram://video/abc",
+                transcript="Hola, esto es una prueba de transcripción local.",
+                on_screen_text="RESULTADOS 2026\nCobertura 87,5 %",
+                duration=95.0,
+            )
+            saved = path.read_text(encoding="utf-8")
+            self.assertIn("## Transcripción", saved)
+            self.assertIn("transcripción local", saved)
+            self.assertIn("## Texto en pantalla (leído de los cuadros)", saved)
+            self.assertIn("Cobertura 87,5 %", saved)
+            self.assertIn("1 min 35 s", saved)
+            self.assertNotIn("Pendiente de configurar", saved)
 
 
 class PageContentTests(unittest.TestCase):

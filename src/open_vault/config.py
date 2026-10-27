@@ -25,6 +25,10 @@ class Settings:
     fetch_main_image: bool
     video_thumbnails: bool
     max_image_bytes: int
+    video_frames: int
+    transcription_engine: str
+    transcription_model: str
+    transcription_language: str
 
 
 def _flag(name: str, default: bool) -> bool:
@@ -48,6 +52,9 @@ def load_settings() -> Settings:
     max_image_mb = int(os.getenv("MAX_IMAGE_MB", "3"))
     if max_image_mb < 1 or max_image_mb > 20:
         raise ValueError("MAX_IMAGE_MB must be between 1 and 20")
+    video_frames = int(os.getenv("VIDEO_FRAMES", "4"))
+    if video_frames < 0 or video_frames > 12:
+        raise ValueError("VIDEO_FRAMES must be between 0 and 12 (0 disables screen text)")
     return Settings(
         bot_token=token,
         allowed_user_ids=allowed_users,
@@ -57,4 +64,8 @@ def load_settings() -> Settings:
         fetch_main_image=_flag("FETCH_MAIN_IMAGE", True),
         video_thumbnails=_flag("VIDEO_THUMBNAILS", True),
         max_image_bytes=max_image_mb * 1024 * 1024,
+        video_frames=video_frames,
+        transcription_engine=os.getenv("TRANSCRIPTION_ENGINE", "").strip(),
+        transcription_model=os.getenv("TRANSCRIPTION_MODEL", "tiny").strip() or "tiny",
+        transcription_language=os.getenv("TRANSCRIPTION_LANGUAGE", "es").strip() or "es",
     )

@@ -109,6 +109,34 @@ apaga. No necesita nginx, ni dominio, ni puertos abiertos.
 Variables útiles: `SERVIDOR` (host de tu `~/.ssh/config`), `PUERTO`, `BASE`
 (dónde guardar la copia) y `PYTHON` (para usar el entorno del proyecto).
 
+#### Dónde se acumula cada cosa
+
+Todo vive en una sola carpeta de Markdown (`VAULT_PATH`, por defecto
+`/srv/obsidian/Open_Vault`):
+
+| Qué | Dónde | Peso típico |
+| --- | --- | --- |
+| Lo que mandaste (crudo) | `Attachments/telegram-<id>.<ext>` | el original tal cual: una foto ronda 200 KB |
+| Lo procesado | `Categorías/<categoría>/<fecha>-<título>-<hash>.md` | 25-40 KB por nota |
+| Lo visual generado | `Attachments/*-ficha.svg`, `*-cifras.svg`, `*-miniatura.jpg` | 5-30 KB cada uno |
+
+Nada se guarda por duplicado: si mandás dos veces la misma fuente se reescribe la
+misma nota, porque el hash de la fuente va en el nombre del archivo. Los cuadros
+que se leen de un video son temporales: al vault solo va el texto, no las imágenes.
+
+Si no querés que esto ocupe disco en el servidor, traelo y vacialo en un paso:
+
+```bash
+bash visor/leer.sh --mover     # baja, verifica con md5 y recién ahí borra
+```
+
+El orden importa: primero baja, después compara el hash de cada archivo con el
+del servidor y **solo borra lo que quedó idéntico**. Si la copia se corta a mitad
+de camino, no borra nada. Tu copia local (`~/.openvault/vault`) acumula todo, así
+que el servidor queda en cero y seguís viendo el histórico completo. La otra
+opción, si querés no depender del servidor para nada, es correr el bot en tu
+propia computadora con `VAULT_PATH` apuntando a una carpeta local.
+
 ### Leerlo en el celular
 
 Sin instalar nada: poné el vault en un repositorio **privado** de GitHub. El
@@ -140,8 +168,10 @@ raíz de un dominio o dentro de una subcarpeta, y también abriendo el
 
 - Linux con Python 3.11 o superior (probado en Debian 13).
 - Un token de bot de Telegram (gratis, con [@BotFather](https://t.me/BotFather)).
-- Opcional: `tesseract-ocr` para el OCR y `ffmpeg` para las miniaturas.
-  `install.sh` los instala si faltan.
+- Opcional: `tesseract-ocr` para el OCR, `ffmpeg` para las miniaturas y los
+  cuadros del video, y `faster-whisper` si querés transcripción. `install.sh`
+  instala tesseract y ffmpeg si faltan; la transcripción se instala aparte, con
+  una línea, porque agrega unos 80 MB de dependencias.
 - Recursos medidos en el servidor de referencia (1 vCPU, 965 MB de RAM, 9.8 GB de
 disco): el bot y la vista web juntos ocupan unos 200 MB de disco y el servicio
 del bot queda con un techo de 300 MB de memoria. El vault crece con las
@@ -173,6 +203,28 @@ cp .env.example .env && nano .env   # BOT_TOKEN, tu ID y VAULT_PATH local
 python -m open_vault.bot
 ```
 
+### Activar la transcripción local (opcional)
+
+Transcribe el audio de los videos **en la misma máquina**: nada se sube a ningún
+servicio. Son dos pasos:
+
+```bash
+/opt/openvault/.venv/bin/pip install faster-whisper   # 80 MB, una sola vez
+```
+
+```ini
+# /opt/openvault/.env
+TRANSCRIPTION_ENGINE=faster-whisper
+TRANSCRIPTION_MODEL=tiny        # tiny es el más liviano; base o small mejoran la calidad
+TRANSCRIPTION_LANGUAGE=es
+TRANSCRIPTION_MEMORY_MB=600     # tope de memoria del proceso
+```
+
+La transcripción corre en un proceso aparte, con tiempo máximo y tope de
+memoria, y el video se guarda igual si el motor falla o tarda demasiado. En
+1 vCPU el modelo `tiny` va a varias veces más rápido que el tiempo real, así que
+un video de 2 minutos se resuelve en menos de un minuto.
+
 ## Configuración
 
 | Variable | Por defecto | Para qué |
@@ -185,6 +237,10 @@ python -m open_vault.bot
 | `OCR_LANGUAGE` | `spa+eng` | Idiomas de Tesseract |
 | `FETCH_MAIN_IMAGE` | `true` | Bajar la imagen principal de las páginas |
 | `VIDEO_THUMBNAILS` | `true` | Sacar miniatura de los videos (necesita ffmpeg) |
+| `VIDEO_FRAMES` | `4` | Cuántos cuadros del video leer con OCR; `0` lo apaga |
+| `TRANSCRIPTION_ENGINE` | vacío | Motor local de transcripción (`faster-whisper`); vacío = apagada |
+| `TRANSCRIPTION_MODEL` | `tiny` | Modelo de Whisper: `tiny`, `base` o `small` |
+| `TRANSCRIPTION_LANGUAGE` | `es` | Idioma esperado del audio |
 | `VISOR_SALIDA` | `/var/www/openvault-web` | Carpeta donde se genera la vista web |
 | `VISOR_BASE_URL` | vacío | URL canónica del sitio, si lo publicás en un subdominio |
 
@@ -196,9 +252,11 @@ python -m open_vault.bot
   link, queda como sección `## Comentario propio`.
 - **Imagen**: guarda el original y le pega el OCR. El epígrafe que pongas en
   Telegram se usa como título.
-- **Video**: si lo mandás como archivo, queda guardado y con miniatura; si es un
-  link, queda la referencia. La transcripción está pendiente a propósito: no se
-  sube el video a ningún servicio sin que alguien lo configure.
+- **Video**: si lo mandás como archivo, queda con miniatura, la duración y el
+  **texto que aparece en pantalla** (OCR de unos cuadros repartidos por el video,
+  que se tiran después de leerlos). Si encendés `TRANSCRIPTION_ENGINE`, se le
+  suma la transcripción del audio, hecha en la misma máquina. Si es un link, queda
+  la referencia: no se descarga el video de YouTube ni de ningún otro sitio.
 - **`/id`**: muestra tu ID numérico de Telegram.
 
 ## Privacidad y límites
@@ -208,11 +266,12 @@ python -m open_vault.bot
 - Las URLs se validan contra SSRF: se rechazan direcciones privadas, locales o
   reservadas, y también durante cada redirección.
 - Nada se resume ni se reescribe: el texto se guarda completo, tal como se extrajo.
-- Nada se envía a terceros. La única excepción sería que configures un proveedor
-  de transcripción, que hoy está apagado.
+- Nada se envía a terceros: ni el texto, ni las imágenes, ni el audio. La
+  transcripción, cuando está encendida, corre en la misma máquina.
 - Límites actuales: la API de bots de Telegram baja archivos de hasta 20 MB, el
   OCR puede tardar unos segundos por imagen en 1 vCPU y los videos se guardan
-  completos (si te preocupa el disco, mandalos como link en vez de archivo).
+  completos (si no querés que ocupen disco en el servidor, usá
+  `visor/leer.sh --mover`, o mandalos como link en vez de archivo).
 
 ## Pruebas
 

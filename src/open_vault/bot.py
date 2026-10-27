@@ -9,7 +9,8 @@ Qué se puede mandar:
   - una URL de página       -> texto íntegro + imagen principal + estructura
   - una URL de video        -> referencia, miniatura si hay ffmpeg
   - una imagen o captura    -> original guardado + OCR
-  - un video (archivo)      -> original local + miniatura y transcripción marcada
+  - un video (archivo)      -> original local + miniatura, texto en pantalla y
+                               transcripción si el motor local está activado
 """
 from __future__ import annotations
 
@@ -25,7 +26,19 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .config import Settings, load_settings
 from .extract import download_image, extract_page, validate_public_http_url
-from .media import is_video_url, ocr_available, ocr_image, video_thumbnail
+from .media import (
+    extract_audio,
+    ffmpeg_available,
+    is_video_url,
+    ocr_available,
+    ocr_frames,
+    ocr_image,
+    video_duration,
+    video_frames,
+    video_thumbnail,
+)
+from .transcribe import available as transcription_available
+from .transcribe import transcribe
 from .vault import ATTACHMENTS_DIR, save_note, save_text_note, save_video_reference
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -40,7 +53,8 @@ AYUDA = (
     "• *Link de una web*: extrae el texto íntegro, sin resumir, y le agrega la "
     "imagen principal.\n"
     "• *Imagen*: guarda el original y le saca el texto con OCR.\n"
-    "• *Video* (enlace o archivo): guarda la referencia y una miniatura.\n\n"
+    "• *Video* (enlace o archivo): guarda la referencia, una miniatura y lo que se "
+    "pueda leer del contenido.\n\n"
     "Todo queda en tu vault de Obsidian, sin pasar por servicios de resumen.\n"
     "Usá /id si necesitás ver tu ID de Telegram."
 )
@@ -257,6 +271,40 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if await asyncio.to_thread(video_thumbnail, target, frame):
                 thumbnail = frame.name
 
+        avisos = ["con miniatura" if thumbnail else "sin miniatura (falta ffmpeg)"]
+        duration = await asyncio.to_thread(video_duration, target)
+        on_screen_text = ""
+        transcript = None
+
+        # Cuadros y audio se leen en una carpeta temporal: al vault solo va el texto
+        # (si no, mirar un video sumaría varios MB de fotogramas al disco).
+        with tempfile.TemporaryDirectory(prefix="openvault-") as tmp:
+            trabajo = Path(tmp)
+            if settings.video_frames > 0 and ffmpeg_available():
+                frames = await asyncio.to_thread(video_frames, target, trabajo, settings.video_frames)
+                if frames:
+                    on_screen_text = await asyncio.to_thread(ocr_frames, frames, settings.ocr_language)
+                    avisos.append(
+                        f"texto en pantalla de {len(frames)} cuadros" if on_screen_text else "sin texto en pantalla"
+                    )
+            if transcription_available(settings.transcription_engine):
+                audio = trabajo / "audio.wav"
+                if await asyncio.to_thread(extract_audio, target, audio):
+                    try:
+                        transcript = await asyncio.to_thread(
+                            transcribe,
+                            audio,
+                            language=settings.transcription_language,
+                            model=settings.transcription_model,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - el video se guarda igual
+                        LOG.warning("Transcription failed: %s", exc)
+                    avisos.append("transcripción lista" if transcript else "sin transcripción")
+            elif settings.transcription_engine:
+                avisos.append("transcripción apagada: el motor local no está instalado")
+            else:
+                avisos.append("transcripción apagada (TRANSCRIPTION_ENGINE vacío)")
+
         note = await asyncio.to_thread(
             save_video_reference,
             settings.vault_path,
@@ -264,11 +312,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             source=f"telegram://video/{video.file_unique_id}",
             thumbnail=thumbnail,
             local_file=attachment,
+            transcript=transcript,
+            on_screen_text=on_screen_text,
+            duration=duration,
         )
-        extra = "con miniatura" if thumbnail else "sin miniatura (falta ffmpeg)"
-        await message.reply_text(
-            f"{_saved_reply(note, settings.vault_path)} ({extra})\nTranscripción pendiente."
-        )
+        await message.reply_text(f"{_saved_reply(note, settings.vault_path)}\n" + " · ".join(avisos))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Video storage failed")
         await message.reply_text(f"No pude guardar el video: {exc}")

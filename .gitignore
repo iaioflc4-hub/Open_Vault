@@ -1,4 +1,7 @@
 .env
+
+# Nunca versionar credenciales, ni siquiera en un archivo suelto.
+API_BOT_Telegram.txt
 .env.*
 !.env.example
 .venv/
