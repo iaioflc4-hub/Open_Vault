@@ -91,9 +91,26 @@ def transcribe(audio_path: Path, *, language: str = "es", model: str = "tiny") -
 
 
 def _transcribir_local(audio: Path, model: str, language: str) -> str:
+    # El modelo se guarda en una carpeta propia: si nos apoyáramos en el HOME del
+    # usuario del servicio (que puede ser de solo lectura, como /opt/openvault) la
+    # descarga falla con "Permission denied" la primera vez. Hugging Face usa
+    # varias carpetas de caché además de la del modelo, así que se apuntan todas.
+    #
+    # Esto va ANTES de importar faster_whisper: la librería lee la configuración
+    # de caché al importarse, así que si se cambia después ya no sirve.
+    cache = Path(CACHE_DIR).expanduser()
+    cache.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(cache))
+    os.environ.setdefault("HF_HUB_CACHE", str(cache))
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache))
+    os.environ.setdefault("HF_XET_CACHE", str(cache / "xet"))
+    # La descarga normal por HTTP alcanza y sobra para un modelo de 75 MB; el
+    # backend xet suma otra caché que en servidores chicos suele ser de solo lectura.
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
     from faster_whisper import WhisperModel
 
-    motor = WhisperModel(model, device="cpu", compute_type="int8", download_root=CACHE_DIR)
+    motor = WhisperModel(model, device="cpu", compute_type="int8", download_root=str(cache))
     segmentos, _ = motor.transcribe(str(audio), language=language or None, vad_filter=True, beam_size=1)
     return " ".join(segmento.text.strip() for segmento in segmentos).strip()
 
