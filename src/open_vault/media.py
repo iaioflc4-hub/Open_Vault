@@ -77,11 +77,8 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def video_thumbnail(video_path: Path, destination: Path, *, second: float = 2.0) -> bool:
-    """Saca un cuadro del video. Devuelve False (sin romper nada) si no hay ffmpeg."""
-    if not ffmpeg_available() or not video_path.is_file():
-        return False
-    destination.parent.mkdir(parents=True, exist_ok=True)
+def _extract_frame(video_path: Path, destination: Path, second: float) -> bool:
+    """Extrae un cuadro en el segundo pedido. True si quedó un archivo con contenido."""
     seek = ["-ss", str(second)] if second > 0 else []
     result = subprocess.run(
         [
@@ -104,4 +101,21 @@ def video_thumbnail(video_path: Path, destination: Path, *, second: float = 2.0)
         text=True,
         timeout=120,
     )
-    return result.returncode == 0 and destination.is_file() and destination.stat().st_size > 0
+    if result.returncode == 0 and destination.is_file() and destination.stat().st_size > 0:
+        return True
+    # Un intento fallido puede dejar un archivo vacío: no sirve como miniatura.
+    destination.unlink(missing_ok=True)
+    return False
+
+
+def video_thumbnail(video_path: Path, destination: Path, *, second: float = 2.0) -> bool:
+    """Saca un cuadro del video. Devuelve False (sin romper nada) si no hay ffmpeg.
+
+    Si el video es más corto que `second`, se reintenta con el primer cuadro:
+    buscar el segundo 2 en un clip de 2 segundos no devuelve nada.
+    """
+    if not ffmpeg_available() or not video_path.is_file():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    attempts = [second, 0.0] if second > 0 else [0.0]
+    return any(_extract_frame(video_path, destination, attempt) for attempt in attempts)

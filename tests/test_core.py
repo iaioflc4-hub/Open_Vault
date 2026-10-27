@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from open_vault.classify import classify
 from open_vault.extract import PageContent, validate_public_http_url
-from open_vault.media import is_video_url
+from open_vault.media import is_video_url, video_thumbnail
 from open_vault.vault import render_attachment, save_note, save_text_note, save_video_reference
 
 
@@ -36,6 +36,19 @@ class UrlSafetyTests(unittest.TestCase):
     def test_rejects_lan_address(self, _lookup) -> None:
         with self.assertRaises(ValueError):
             validate_public_http_url("http://intranet.local/api")
+
+
+class ThumbnailTests(unittest.TestCase):
+    def test_missing_file_is_not_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertFalse(video_thumbnail(Path(temp) / "no-existe.mp4", Path(temp) / "salida.jpg"))
+
+    def test_returns_false_without_ffmpeg(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "video.mp4"
+            video.write_bytes(b"no es un video")
+            with patch("open_vault.media.shutil.which", return_value=None):
+                self.assertFalse(video_thumbnail(video, Path(temp) / "salida.jpg"))
 
 
 class VideoDetectionTests(unittest.TestCase):
