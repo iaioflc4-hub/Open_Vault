@@ -76,15 +76,57 @@ Una sola pieza de software. A propósito **no** usa n8n ni IFTTT: cada servicio
 extra que se suma es otro lugar donde se puede romper la privacidad, otra cosa
 que mantener y otra cosa que hay que replicar para copiar el proyecto.
 
-## Vista web del vault
+## Leer las capturas
+
+### En Obsidian (el camino recomendado)
+
+Las notas son Markdown común, así que Obsidian las abre tal cual. Un comando trae
+las capturas del servidor a tu carpeta local, las guarda en git y las sube:
+
+```bash
+bash visor/sincronizar.sh          # Linux, macOS o Git Bash en Windows
+```
+
+En Windows: doble clic en `visor\sincronizar.cmd`. La carpeta por defecto es
+`~/Obsidian/Open_Vault`; si querés otro lugar (por ejemplo dentro del vault que ya
+usás), pasá `OBSIDIAN_VAULT`:
+
+```bash
+OBSIDIAN_VAULT="$HOME/Documents/Open_Vault" bash visor/sincronizar.sh
+```
+
+Después, en Obsidian: **Abrir carpeta como vault** y elegís esa carpeta. Ya está:
+búsqueda, enlaces, imágenes y fórmulas funcionando sobre archivos comunes. El
+comando hace un commit por corrida, así que queda el historial de qué llegó y
+cuándo.
+
+#### Para leerlo en el celular
+
+El plugin **Git** de Obsidian hace lo mismo que el script: clonás el repo una vez
+y hacés *Pull* cuando quieras. Una sola vez, en tu computadora:
+
+```bash
+gh repo create MiUsuario/Open_Vault-notas --private     # o creálo desde la web
+git -C ~/Obsidian/Open_Vault remote add origin git@github.com:MiUsuario/Open_Vault-notas.git
+bash visor/sincronizar.sh                                # trae y sube
+```
+
+Y en el celular: Obsidian + plugin Git, clonás ese repo privado (con un token de
+GitHub que solo pueda leerlo) y hacés *Pull*. Después de cada
+`sincronizar.cmd` en la computadora, un *Pull* en el celular y lo tenés al día.
+
+Si no querés instalar nada en el celular, el mismo repo privado se lee desde el
+navegador: GitHub abre las notas y las imágenes, y dibuja los diagramas Mermaid.
+
+### Vista web (opcional)
 
 ![Portada de la vista web](docs/preview-portada.png)
 
-Para leer las capturas desde el celular o desde cualquier computadora se genera
-un sitio estático con **MkDocs Material** (libre, con búsqueda, Mermaid y
-matemática). No hay un servicio nuevo escuchando: son archivos HTML que sirve el
-nginx que ya tengas, y un temporizador de systemd los regenera cada 5 minutos
-—solo si el vault cambió—.
+Si preferís una web —o querés mostrar el vault a alguien sin darle acceso al
+repo— se genera un sitio estático con **MkDocs Material** (libre, con búsqueda,
+Mermaid y matemática). No hay un servicio nuevo escuchando: son archivos HTML que
+sirve el nginx que ya tengas, y un temporizador de systemd los regenera cada 5
+minutos —solo si el vault cambió—.
 
 ![Nota con estructura y fórmulas](docs/preview-nota.png)
 
@@ -95,16 +137,19 @@ adjuntos embebidos (`![[Attachments/x.svg]]`), wikilinks, callouts (`> [!info]`)
 y fórmulas. Mermaid y MathJax quedan dentro del repo, así que la vista funciona
 sin depender de ningún CDN y sin pedirle nada a terceros (tampoco tipografías).
 
-### Leerlo en tu computadora (un comando, sin publicar nada)
+#### La vista web en tu computadora (sin publicar nada)
 
 ```bash
 bash visor/leer.sh          # Linux, macOS o Git Bash en Windows
 ```
 
-En Windows: doble clic en `visor/leer.cmd`. El script trae una copia del vault
-desde tu servidor por SSH, arma la vista y la abre en `http://localhost:8000`.
+En Windows: doble clic en `visor/leer.cmd`. Trae su propia copia del vault (no
+toca la de Obsidian), arma la vista y la abre en `http://localhost:8000`.
 Nada sale a internet: el servidor escucha solo en `127.0.0.1` y con Ctrl+C se
 apaga. No necesita nginx, ni dominio, ni puertos abiertos.
+
+Los dos comandos comparten las mismas variables: `SERVIDOR` (host de tu
+`~/.ssh/config`), `PUERTO`, `BASE` (estado y copia de la web) y `PYTHON`.
 
 Variables útiles: `SERVIDOR` (host de tu `~/.ssh/config`), `PUERTO`, `BASE`
 (dónde guardar la copia) y `PYTHON` (para usar el entorno del proyecto).
@@ -127,28 +172,16 @@ que se leen de un video son temporales: al vault solo va el texto, no las imáge
 Si no querés que esto ocupe disco en el servidor, traelo y vacialo en un paso:
 
 ```bash
-bash visor/leer.sh --mover     # baja, verifica con md5 y recién ahí borra
+bash visor/sincronizar.sh --mover     # baja a Obsidian, verifica con md5 y borra
+bash visor/leer.sh --mover           # lo mismo, para la copia de la web
 ```
 
 El orden importa: primero baja, después compara el hash de cada archivo con el
 del servidor y **solo borra lo que quedó idéntico**. Si la copia se corta a mitad
-de camino, no borra nada. Tu copia local (`~/.openvault/vault`) acumula todo, así
-que el servidor queda en cero y seguís viendo el histórico completo. La otra
-opción, si querés no depender del servidor para nada, es correr el bot en tu
-propia computadora con `VAULT_PATH` apuntando a una carpeta local.
-
-### Leerlo en el celular
-
-Sin instalar nada: poné el vault en un repositorio **privado** de GitHub. El
-visor de GitHub abre las notas en el navegador del celular, con sus imágenes y
-con los diagramas Mermaid dibujados (y soporta las fórmulas matemáticas). Para
-las carpetas y las fichas SVG se ve igual de bien, y no hay servidor tuyo
-involucrado.
-
-La otra opción es [Obsidian](https://obsidian.md) (gratis para uso personal) en
-el celular, apuntando a la carpeta del vault sincronizada por Git, Syncthing o
-la carpeta compartida que ya uses. No hace falta configurar nada del lado de
-Open_Vault: son archivos Markdown comunes.
+de camino, no borra nada. Tu copia local acumula todo, así que el servidor queda
+en cero y seguís viendo el histórico completo. La otra opción, si querés no
+depender del servidor para nada, es correr el bot en tu propia computadora con
+`VAULT_PATH` apuntando a una carpeta local.
 
 ### En el servidor (opcional)
 
@@ -185,12 +218,28 @@ cd Open_Vault
 sudo bash install.sh
 ```
 
-Después, lo único que no se puede automatizar (y es tuyo, nunca se comparte):
+Después, un asistente que pregunta lo que falta y **verifica cada respuesta**
+contra la API de Telegram (si el token está mal lo dice; tu ID lo lee del mensaje
+que le mandás al bot, no lo copiás de ningún lado):
 
 ```bash
-sudo nano /opt/openvault/.env      # pegá BOT_TOKEN de @BotFather
-sudo systemctl start open-vault
-# escribile /id al bot y poné tu número en ALLOWED_TELEGRAM_USER_IDS
+sudo bash configurar.sh
+```
+
+Te pide el token de @BotFather, espera tu `/id`, te pregunta si querés la
+transcripción local y dónde guardar las notas, reinicia el servicio y te manda un
+mensaje de prueba: si te llega, está todo conectado.
+
+```bash
+sudo bash configurar.sh --simular     # valida el token y muestra qué haría, sin tocar nada
+sudo BOT_TOKEN=123:abc bash configurar.sh   # sin preguntas (instalación desatendida)
+```
+
+Si preferís hacerlo a mano, las claves son estas (el `.env` nunca se comparte ni
+se versiona):
+
+```bash
+sudo nano /opt/openvault/.env      # BOT_TOKEN y ALLOWED_TELEGRAM_USER_IDS
 sudo systemctl restart open-vault
 ```
 
@@ -232,6 +281,9 @@ video largo se hace esperar.
 
 ## Configuración
 
+Todo esto lo escribe `configurar.sh`; la tabla queda para quien quiera ajustar algo
+puntual a mano.
+
 | Variable | Por defecto | Para qué |
 | --- | --- | --- |
 | `BOT_TOKEN` | — | Token de @BotFather (obligatorio) |
@@ -265,7 +317,10 @@ video largo se hace esperar.
 - **Audio o nota de voz**: se guarda el archivo y, con el motor de transcripción
   encendido, el texto. El audio de Telegram llega en `.oga`, así que se convierte
   con ffmpeg antes de transcribir (nada sale de la máquina).
-- **`/id`**: muestra tu ID numérico de Telegram.
+- **`/id`**: muestra tu ID numérico de Telegram (lo usa el asistente para
+  autorizarte sin que copies números).
+- Después de capturar, un `sincronizar.cmd` en tu computadora y un *Pull* en el
+  celular: tus notas viajan solas.
 
 ## Privacidad y límites
 

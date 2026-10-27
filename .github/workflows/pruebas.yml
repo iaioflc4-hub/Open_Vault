@@ -28,5 +28,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[visor]"
 
+      - name: Revisar sintaxis de los scripts
+        run: |
+          for script in install.sh configurar.sh visor/comun.sh visor/leer.sh visor/sincronizar.sh; do
+            bash -n "$script" && echo "$script: ok"
+          done
+          command -v shellcheck >/dev/null && shellcheck -S warning install.sh configurar.sh visor/comun.sh visor/leer.sh visor/sincronizar.sh || echo "shellcheck no está disponible"
+
       - name: Correr las pruebas
         run: python -m unittest discover -s tests -v

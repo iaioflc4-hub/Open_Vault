@@ -185,6 +185,11 @@ if [ "$TOKEN_SET" -eq 1 ]; then
 else
   cat <<PASOS
 Falta lo único que no se puede automatizar: tu token de Telegram.
+Hacelo con el asistente (pregunta, verifica cada respuesta y prueba el bot):
+
+  sudo bash $SCRIPT_DIR/configurar.sh
+
+O a mano:
 
   1. Hablá con @BotFather en Telegram, mandá /newbot y copiá el token.
   2. Editá la configuración:   sudo nano $APP_DIR/.env
@@ -194,7 +199,7 @@ Falta lo único que no se puede automatizar: tu token de Telegram.
   5. Recargá la configuración: sudo systemctl restart open-vault
 
 El vault queda en:  $VAULT_PATH
-Para leerlo: abrí esa carpeta con Obsidian (o cualquier editor de Markdown).
+Para leerlo: doble clic en visor/sincronizar.cmd y abrí esa carpeta con Obsidian.
 Vista web (se regenera sola cada 5 minutos):  $VISOR_SALIDA
 PASOS
 fi
