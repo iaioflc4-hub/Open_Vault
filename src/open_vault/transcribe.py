@@ -90,6 +90,32 @@ def transcribe(audio_path: Path, *, language: str = "es", model: str = "tiny") -
     return resultado.stdout.strip()
 
 
+def _leer_wav(audio: Path):
+    """Lee el WAV de 16 kHz que genera ffmpeg como muestras float32.
+
+    El motor puede abrir el archivo por su cuenta, pero para eso usa PyAV, y la
+    versión nueva de PyAV y la vieja de faster-whisper no se ponen de acuerdo en
+    un argumento. Como el audio lo produce ffmpeg con formato fijo, leerlo con la
+    librería estándar es más corto y no depende de esa pelea.
+    """
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(audio), "rb") as wav:
+        if wav.getsampwidth() != 2:
+            raise RuntimeError("Se esperaba un WAV de 16 bits; lo genera ffmpeg")
+        frecuencia = wav.getframerate()
+        canales = wav.getnchannels()
+        muestras = np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16)
+    datos = muestras.astype(np.float32) / 32768.0
+    if canales > 1:
+        datos = datos.reshape(-1, canales).mean(axis=1)
+    if frecuencia != 16000:
+        raise RuntimeError(f"Se esperaba un WAV de 16 kHz y llegó de {frecuencia} Hz")
+    return datos
+
+
 def _transcribir_local(audio: Path, model: str, language: str) -> str:
     # El modelo se guarda en una carpeta propia: si nos apoyáramos en el HOME del
     # usuario del servicio (que puede ser de solo lectura, como /opt/openvault) la
@@ -111,7 +137,9 @@ def _transcribir_local(audio: Path, model: str, language: str) -> str:
     from faster_whisper import WhisperModel
 
     motor = WhisperModel(model, device="cpu", compute_type="int8", download_root=str(cache))
-    segmentos, _ = motor.transcribe(str(audio), language=language or None, vad_filter=True, beam_size=1)
+    segmentos, _ = motor.transcribe(
+        _leer_wav(audio), language=language or None, vad_filter=True, beam_size=1
+    )
     return " ".join(segmento.text.strip() for segmento in segmentos).strip()
 
 
