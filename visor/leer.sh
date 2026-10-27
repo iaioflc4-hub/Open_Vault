@@ -42,6 +42,8 @@ bajar_vault "$COPIA"
 
 if [ "$MOVER" -eq 1 ]; then
   vaciar_servidor "$COPIA" "$BASE/manifiesto.md5"
+else
+  purgar_borrados "$COPIA"
 fi
 
 info "Armando la vista web"

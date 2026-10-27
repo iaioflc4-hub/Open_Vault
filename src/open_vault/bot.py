@@ -29,10 +29,10 @@ from urllib.parse import urlparse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from .classify import classify_or
+from .classify import UNCATEGORIZED, classify
 from .config import Settings, load_settings
 from .extract import download_image, extract_page, validate_public_http_url
-from .links import fetch_video_link
+from .links import fetch_video_link, transcript_of_link
 from .media import (
     extract_audio,
     ffmpeg_available,
@@ -68,6 +68,8 @@ AYUDA = (
     "si está encendida, la transcripción.\n"
     "• *Audio o nota de voz*: lo transcribe en la misma máquina y guarda el texto.\n\n"
     "Todo queda en tu vault de Obsidian, sin pasar por servicios de resumen.\n"
+    "Cada captura se clasifica por su contenido y por el pie que le escribas: si le \n"
+    "ponés un `#etiqueta`, ese es el tema.\n"
     "Usá /id si necesitás ver tu ID de Telegram."
 )
 
@@ -96,6 +98,16 @@ def _title_from_text(text: str, fallback: str) -> str:
 
 def _saved_reply(path: Path, vault: Path) -> str:
     return f"Guardado en tu vault: `{path.relative_to(vault).as_posix()}`"
+
+
+SIN_TEMA = (
+    "No encontré el tema en el contenido. Mandámelo con un pie o un `#etiqueta` "
+    "(por ejemplo `#seguridad`) y lo clasifico y lo muevo de carpeta."
+)
+
+
+def _detalle_categoria(category: str) -> str:
+    return f" · {SIN_TEMA}" if category == UNCATEGORIZED else ""
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -195,26 +207,14 @@ async def _save_video_link(message, url: str, settings: Settings) -> None:
         with tempfile.TemporaryDirectory(prefix="openvault-link-") as tmp:
             trabajo = Path(tmp)
             info = await asyncio.to_thread(fetch_video_link, url, trabajo)
-            transcript = info.transcript
-            transcript_source = info.transcript_source
-
-            if not transcript and info.audio_path is not None:
-                if transcription_available(settings.transcription_engine):
-                    wav = trabajo / "audio.wav"
-                    if await asyncio.to_thread(extract_audio, info.audio_path, wav):
-                        try:
-                            transcript = await asyncio.to_thread(
-                                transcribe,
-                                wav,
-                                language=settings.transcription_language,
-                                model=settings.transcription_model,
-                            )
-                            transcript_source = "transcripción local del audio"
-                        except Exception as exc:  # noqa: BLE001 - la nota se guarda igual
-                            LOG.warning("Link transcription failed: %s", exc)
-                            info.note += f" · no pude transcribir: {exc}"
-                else:
-                    info.note += " · el audio se bajó pero la transcripción está apagada"
+            transcript, transcript_source = await asyncio.to_thread(
+                transcript_of_link,
+                info,
+                trabajo,
+                engine=settings.transcription_engine,
+                language=settings.transcription_language,
+                model=settings.transcription_model,
+            )
 
             thumbnail = None
             if settings.fetch_main_image and info.thumbnail_url:
@@ -303,6 +303,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         body = text or "Sin texto legible en la imagen (OCR vacío o no disponible)."
         if caption and text:
             body = f"{caption}\n\n## Texto reconocido (OCR)\n\n{text}"
+        categoria = classify(f"{text}\n{caption}", title=caption)
         note = await asyncio.to_thread(
             save_note,
             settings.vault_path,
@@ -310,12 +311,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             content=body,
             source=f"telegram://photo/{photo.file_unique_id}",
             kind="image-ocr",
-            category=classify_or(f"{text}\n{caption}", "Imágenes", title=caption),
+            category=categoria,
             attachments=[attachment],
             hero=attachment,
         )
         detail = "con texto OCR" if text else "sin texto legible"
-        await message.reply_text(f"{_saved_reply(note, settings.vault_path)} ({detail})")
+        await message.reply_text(
+            f"{_saved_reply(note, settings.vault_path)} ({detail}){_detalle_categoria(categoria)}"
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Image capture failed")
         await message.reply_text(f"No pude procesar la imagen: {exc}")
@@ -472,6 +475,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         caption = (message.caption or "").strip()
         title = caption or _title_from_text(texto, f"Audio del {message.date:%Y-%m-%d}")
         cuerpo = texto or f"> [!warning] Sin transcripción\n> {aviso}"
+        categoria = classify(f"{texto}\n{caption}", title=caption)
         nota = await asyncio.to_thread(
             save_note,
             settings.vault_path,
@@ -479,10 +483,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             content=cuerpo,
             source=f"telegram://voice/{media.file_unique_id}",
             kind="audio",
-            category=classify_or(f"{texto}\n{caption}", "Audios", title=caption),
+            category=categoria,
             attachments=[attachment],
         )
-        await message.reply_text(f"{_saved_reply(nota, settings.vault_path)}\n{aviso}")
+        await message.reply_text(
+            f"{_saved_reply(nota, settings.vault_path)}\n{aviso}{_detalle_categoria(categoria)}"
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Voice capture failed")
         await message.reply_text(f"No pude procesar el audio: {exc}")

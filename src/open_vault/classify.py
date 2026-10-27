@@ -1,16 +1,21 @@
 """Clasificación por tema, con reglas y sin IA paga.
 
-Dos ideas que importan para que sirva en la práctica:
+Tres ideas que importan para que sirva en la práctica:
 
 - **El título pesa más que el cuerpo.** Un video que se llama "Qué es Linux" es de
-  tecnología aunque su transcripción mencione de paso una empresa.
+  tecnología aunque su transcripción mencione de paso una empresa. El pie que
+  escribe la persona al mandar algo vale como título, así que pesa el triple.
 - **Nunca se clasifica por el formato.** Un video no va a "Videos" por ser video:
-  va al tema del que habla. El formato queda como categoría de respaldo, para
-  cuando no hay ni una pista del contenido.
+  va al tema del que habla. El formato ya queda anotado en `type:` del encabezado.
+- **Una etiqueta a mano manda.** Si alguien escribió `#huerta`, ese es el tema,
+  aunque la palabra no esté en ninguna lista de acá: el vault se ordena con las
+  palabras de quien lo usa, no solo con las de este archivo.
 """
 from __future__ import annotations
 
 import re
+
+from .enrich import hashtags
 
 CATEGORIES = {
     "Tecnología": (
@@ -85,8 +90,26 @@ def score(text: str, *, title: str = "") -> dict[str, int]:
     }
 
 
+def etiqueta_explicita(title: str, text: str = "") -> str:
+    """Primera etiqueta escrita a mano (`#algo`), si hay alguna.
+
+    Se mira el título (el pie del mensaje) antes que el cuerpo: si alguien escribió
+    el pie a propósito, ahí está su tema. Devuelve el texto listo para usar como
+    categoría: `energia-solar` -> `Energia solar`.
+    """
+    for fuente in (title, text):
+        encontradas = hashtags(fuente or "", limit=1)
+        if encontradas:
+            return re.sub(r"[-_]+", " ", encontradas[0]).strip().capitalize()
+    return ""
+
+
 def classify(text: str, *, title: str = "") -> str:
     """Tema de una captura, o `Por clasificar` si no hay ninguna pista.
+
+    El orden es: primero las listas de temas (con el título pesando el triple),
+    después una etiqueta escrita a mano, y solo si no hay nada, `Por clasificar`.
+    Nunca se usa el formato del archivo como categoría.
 
     Los empates se resuelven de forma previsible: primero el que aparece en el
     título, después el que se menciona antes. Si alguien escribió `#seguridad`
@@ -94,7 +117,7 @@ def classify(text: str, *, title: str = "") -> str:
     depender del orden en que están escritas las listas de este archivo.
     """
     del_cuerpo, del_titulo = _detalle(text, 1), _detalle(title, 3)
-    elegida = UNCATEGORIZED
+    elegida = ""
     mejor: tuple[int, int, int, int, int] | None = None
     for indice, categoria in enumerate(CATEGORIES):
         puntos = del_cuerpo[categoria][0] + del_titulo[categoria][0]
@@ -106,17 +129,7 @@ def classify(text: str, *, title: str = "") -> str:
         clave = (puntos, 1 if en_titulo else 0, -pos_titulo, -pos_cuerpo, -indice)
         if mejor is None or clave > mejor:
             mejor, elegida = clave, categoria
-    return elegida
+    return elegida or etiqueta_explicita(title, text) or UNCATEGORIZED
 
 
-def classify_or(text: str, default: str, *, title: str = "") -> str:
-    """Tema de la captura y, si no hay pistas, la categoría de respaldo.
-
-    El respaldo es el formato (`Videos`, `Imágenes`, `Audios`, `Documentos`): sirve
-    para no dejar la nota sin lugar, pero nunca gana si hay algo del contenido.
-    """
-    resultado = classify(text, title=title)
-    return default if resultado == UNCATEGORIZED else resultado
-
-
-__all__ = ["CATEGORIES", "UNCATEGORIZED", "classify", "classify_or", "score"]
+__all__ = ["CATEGORIES", "UNCATEGORIZED", "classify", "etiqueta_explicita", "score"]

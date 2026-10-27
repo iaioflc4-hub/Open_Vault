@@ -20,13 +20,98 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .classify import classify, classify_or
+from .classify import classify
 from .enrich import Figure, key_figures, math_blocks, mermaid_tree, outline, stats, tags
 from .svg import bars_svg, card_svg, color_for, format_number
 
 ATTACHMENTS_DIR = "Attachments"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+TITLE_LINE_RE = re.compile(r'^title:\s*("?)(.*?)\1\s*$', re.MULTILINE)
+PENDIENTE = "## Transcripción pendiente"
+SUGERENCIA_MOTOR = (
+    " Para que la transcripción sea automática, activá `TRANSCRIPTION_ENGINE` en el `.env`."
+)
+
+
+def reemplazar_transcripcion(texto: str, transcript: str, origen: str = "") -> str:
+    """Pone la transcripción en una nota que decía "pendiente", sin tocar el resto.
+
+    Se trabaja por secciones (`## …`) y no con una expresión regular gigante: así
+    una nota escrita a mano alrededor del aviso no se pierde ni se duplica.
+    """
+    transcript = transcript.strip()
+    if not transcript:
+        return texto
+    cabecera = f"Transcripción ({origen})" if origen else "Transcripción"
+
+    partes = texto.split("\n## ")
+    for indice, parte in enumerate(partes):
+        if indice and parte.startswith("Transcripción pendiente"):
+            partes[indice] = f"{cabecera}\n\n{transcript}\n"
+            return _sin_sugerencia(_sin_nodo_pendiente("\n## ".join(partes)))
+
+    # No había aviso de pendiente: la nota se guardó sin transcripción y ahora sí
+    # hay una. Se inserta antes de las notas propias, que son el final natural.
+    bloque = f"## {cabecera}\n\n{transcript}\n"
+    if "\n## Notas" in texto:
+        return _sin_sugerencia(texto.replace("\n## Notas", f"\n{bloque}\n## Notas", 1))
+    return _sin_sugerencia(texto.rstrip() + f"\n\n{bloque}")
+
+
+SEPARADORES = ("## Transcripción pendiente", "## Transcripción", "## Texto en pantalla", "## Notas")
+
+
+def _insertar_antes_de_notas(texto: str, titulo: str, cuerpo: str) -> str:
+    """Agrega una sección antes de las que cierran la nota, sin pisar ninguna."""
+    bloque = f"## {titulo}\n\n{cuerpo}\n"
+    for marca in SEPARADORES:
+        separador = f"\n{marca}"
+        if separador in texto:
+            return texto.replace(separador, f"\n{bloque}\n{marca}", 1)
+    return texto.rstrip() + f"\n\n{bloque}"
+
+
+def completar_nota_video(
+    texto: str,
+    *,
+    transcript: str = "",
+    transcript_origen: str = "",
+    description: str = "",
+    title: str = "",
+) -> str:
+    """Completa una nota de video con lo que se pudo leer recién.
+
+    Se usa al rehacer un enlace que en su momento no se pudo abrir: agrega la
+    descripción y la transcripción que faltaban, y cambia el título si era una URL
+    pelada. Lo que la nota ya tenía —lo que vos escribiste— queda intacto.
+    """
+    nuevo = texto
+    if description.strip() and "## Descripción original" not in nuevo:
+        nuevo = _insertar_antes_de_notas(nuevo, "Descripción original", description.strip())
+    if transcript.strip():
+        nuevo = reemplazar_transcripcion(nuevo, transcript, transcript_origen)
+    if title.strip():
+        nuevo = reemplazar_titulo(nuevo, title)
+    return nuevo
+
+
+def _sin_nodo_pendiente(texto: str) -> str:
+    """El diagrama de estructura también nombraba la sección: ya no existe."""
+    return re.sub(r"(?m)^(\s+)Transcripción pendiente$", r"\1Transcripción", texto)
+
+
+def _sin_sugerencia(texto: str) -> str:
+    return texto.replace(SUGERENCIA_MOTOR, "")
+
+
+def reemplazar_titulo(texto: str, titulo: str) -> str:
+    """Cambia el título del encabezado YAML (por ejemplo, cuando era una URL)."""
+    if not titulo.strip():
+        return texto
+    return TITLE_LINE_RE.sub(
+        lambda _: f"title: {json.dumps(titulo.strip(), ensure_ascii=False)}", texto, count=1
+    )
 
 
 def _slug(value: str, limit: int = 72) -> str:
@@ -223,8 +308,8 @@ def save_video_reference(
     `on_screen_text` del OCR de los cuadros. No se envía el video a ningún servicio
     externo: eso solo pasaría si alguien configura un proveedor a propósito.
 
-    La categoría sale del contenido (título, canal, descripción, transcripción), no
-    del formato: un video sobre Linux va a Tecnología, no a "Videos".
+    La categoría sale del contenido (título, canal, descripción, transcripción, pie
+    y etiquetas), no del formato: un video sobre Linux va a Tecnología, no a "Videos".
     """
     host = urlparse(source).netloc
     lineas = [
@@ -274,10 +359,9 @@ def save_video_reference(
         metadata["uploader"] = uploader
     if transcript_source:
         metadata["transcript_source"] = transcript_source
-    categoria = classify_or(
+    categoria = classify(
         "\n".join([description or "", transcript or "", on_screen_text or ""]),
-        "Videos",
-        title=f"{title} {description or ''}",
+        title=f"{title}\n{description or ''}",
     )
     return save_note(
         vault,
@@ -306,17 +390,19 @@ def save_document(
     attachments: list[str] | None = None,
     scanned_text: str | None = None,
     page_count: int | None = None,
-    default_category: str = "Documentos",
     kind: str = "pdf",
 ) -> Path:
-    """Documento (PDF, presentación, planilla): texto completo y OCR si es un escaneo."""
+    """Documento (PDF, presentación, planilla): texto completo y OCR si es un escaneo.
+
+    La categoría sale del documento (título del archivo, texto, OCR, pie y
+    etiquetas). Si un PDF no trae ni una pista, queda en `Por clasificar` con las
+    suyas, no en una carpeta de formato.
+    """
     cuerpo = content.strip() or "Sin texto seleccionable (documento escaneado o solo imágenes)."
     if scanned_text:
         cuerpo += f"\n\n## Texto reconocido de las páginas (OCR)\n\n{scanned_text}"
     metadata = {"pages": page_count} if page_count else None
-    categoria = classify_or(
-        f"{_titulo_legible(content)}\n{scanned_text or ''}", default_category, title=title
-    )
+    categoria = classify(f"{_titulo_legible(content)}\n{scanned_text or ''}", title=title)
     return save_note(
         vault,
         title=title,
@@ -337,7 +423,10 @@ def save_text_note(vault: Path, *, title: str, content: str, source: str) -> Pat
 __all__ = [
     "ATTACHMENTS_DIR",
     "folder_for_category",
+    "completar_nota_video",
     "render_attachment",
+    "reemplazar_titulo",
+    "reemplazar_transcripcion",
     "save_document",
     "save_note",
     "save_text_note",

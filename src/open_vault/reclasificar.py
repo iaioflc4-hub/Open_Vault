@@ -15,7 +15,7 @@ import json
 import re
 from pathlib import Path
 
-from .classify import UNCATEGORIZED, classify_or
+from .classify import UNCATEGORIZED, classify
 from .vault import folder_for_category
 
 TITLE_RE = re.compile(r'^title:\s*("?)(.*?)\1\s*$', re.MULTILINE)
@@ -25,8 +25,9 @@ CATEGORIAS_DIR = "Categorías"
 
 
 def _campo(texto: str, patron: re.Pattern[str]) -> str:
+    """Valor de un campo del encabezado (`title: …`), con o sin comillas."""
     match = patron.search(texto)
-    return match.group(2).strip() if match else ""
+    return match.group(patron.groups).strip() if match else ""
 
 
 def cuerpo_sin_encabezado(texto: str) -> str:
@@ -63,7 +64,7 @@ def reclasificar(vault: Path, *, simular: bool = False) -> dict[str, int]:
             continue
         titulo = _campo(texto, TITLE_RE)
         actual = _campo(texto, CATEGORY_RE) or UNCATEGORIZED
-        nueva = classify_or(cuerpo_sin_encabezado(texto), actual, title=titulo)
+        nueva = classify(cuerpo_sin_encabezado(texto), title=titulo)
         if nueva == actual:
             resumen["sin_cambios"] += 1
             continue

@@ -11,7 +11,10 @@ WorkingDirectory=__VAULT_PATH__
 Environment=APP_DIR=__APP_DIR__
 Environment=VAULT_PATH=__VAULT_PATH__
 Environment=PYTHONUNBUFFERED=1
-# La clave de despliegue y el known_hosts viven en /etc/openvault: el HOME del
-# usuario del servicio no es escribible (y no hace falta que lo sea).
-Environment=GIT_SSH_COMMAND=ssh -i /etc/openvault/vault-deploy -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/openvault/known_hosts
+# Opcional: si para subir a GitHub hace falta una clave propia (por ejemplo una
+# clave de despliegue), se escribe en /etc/openvault/git.env una línea como
+#   GIT_SSH_COMMAND=ssh -i /etc/openvault/vault-deploy -o IdentitiesOnly=yes
+# El HOME del usuario del servicio no es escribible, así que git no puede mirar
+# su configuración global: todo lo que necesite va acá.
+EnvironmentFile=-/etc/openvault/git.env
 ExecStart=/bin/bash __APP_DIR__/deploy/open-vault-sync.sh

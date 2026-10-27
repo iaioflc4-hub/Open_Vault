@@ -25,6 +25,8 @@ REPO_URL="${REPO_URL:-https://github.com/iaioflc4-hub/Open_Vault.git}"
 UNIT_PATH="/etc/systemd/system/open-vault.service"
 UNIT_VISOR="/etc/systemd/system/open-vault-visor.service"
 UNIT_TIMER="/etc/systemd/system/open-vault-visor.timer"
+UNIT_SYNC="/etc/systemd/system/open-vault-sync.service"
+UNIT_SYNC_TIMER="/etc/systemd/system/open-vault-sync.timer"
 INSTALAR_APT=1
 INSTALAR_VISOR=1
 
@@ -92,6 +94,9 @@ if [ "$INSTALAR_APT" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
   FALTAN=()
   command -v tesseract >/dev/null 2>&1 || FALTAN+=(tesseract-ocr tesseract-ocr-spa)
   command -v ffmpeg >/dev/null 2>&1 || FALTAN+=(ffmpeg)
+  # poppler es lo que convierte las páginas de un PDF escaneado en imágenes para
+  # el OCR (pdftoppm).
+  command -v pdftoppm >/dev/null 2>&1 || FALTAN+=(poppler-utils)
   if [ "${#FALTAN[@]}" -gt 0 ]; then
     log "Instalando utilidades locales: ${FALTAN[*]}"
     export DEBIAN_FRONTEND=noninteractive
@@ -110,7 +115,10 @@ if [ ! -d "$APP_DIR/.venv" ]; then
   "$PYTHON_BIN" -m venv "$APP_DIR/.venv"
 fi
 "$APP_DIR/.venv/bin/python" -m pip install --quiet --upgrade pip
-"$APP_DIR/.venv/bin/python" -m pip install --quiet -e "$APP_DIR"
+# Los extras de links y PDF son livianos (yt-dlp y pypdf) y sin ellos el bot no
+# puede leer un link de video ni un PDF. La transcripción queda aparte porque pesa
+# 350 MB: se instala solo si se pide, con una línea que documenta el README.
+"$APP_DIR/.venv/bin/python" -m pip install --quiet -e "$APP_DIR[links,pdf]"
 
 # --- 5. Vault --------------------------------------------------------------
 if [ -d "$VAULT_PATH" ]; then
@@ -173,6 +181,23 @@ sed -e "s|__APP_DIR__|$APP_DIR|g" \
 systemctl daemon-reload
 systemctl enable --quiet open-vault.service
 
+# --- 9. Vault al día y subido (clasificación, enlaces y GitHub) ------------
+# Este es el paso que hace que la computadora y el celular vean las capturas sin
+# que nadie apriete nada: reclasifica, teje el gráfico, y sube los cambios.
+log "Instalando el sincronizador del vault (cada 5 minutos)"
+if [ ! -d "$VAULT_PATH/.git" ]; then
+  su -s /bin/sh -c "git -C '$VAULT_PATH' init --quiet -b main" "$SERVICE_USER" 2>/dev/null \
+    || warn "No pude preparar el repositorio del vault: revisá que git esté instalado y los permisos de $VAULT_PATH."
+fi
+sed -e "s|__APP_DIR__|$APP_DIR|g" \
+    -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
+    -e "s|__VAULT_PATH__|$VAULT_PATH|g" \
+    "$APP_DIR/deploy/open-vault-sync.service" > "$UNIT_SYNC"
+cp "$APP_DIR/deploy/open-vault-sync.timer" "$UNIT_SYNC_TIMER"
+systemctl daemon-reload
+systemctl enable --quiet open-vault-sync.timer
+systemctl start open-vault-sync.timer
+
 TOKEN_SET=0
 grep -qE '^BOT_TOKEN=.+' "$APP_DIR/.env" && TOKEN_SET=1
 
@@ -200,6 +225,8 @@ O a mano:
 
 El vault queda en:  $VAULT_PATH
 Para leerlo: doble clic en visor/sincronizar.cmd y abrí esa carpeta con Obsidian.
+Para que se suba solo: git -C "$VAULT_PATH" remote add origin <tu-repo-privado>.git
+  (y si hace falta una clave, GIT_SSH_COMMAND=… en /etc/openvault/git.env)
 Vista web (se regenera sola cada 5 minutos):  $VISOR_SALIDA
 PASOS
 fi

@@ -28,6 +28,22 @@ requiere_ssh() {
   command -v tar >/dev/null || { error "Falta tar en el PATH."; exit 1; }
 }
 
+# --- Dónde está tu copia del vault -----------------------------------------
+# Si ya hay una copia en un lugar habitual del sistema, se usa esa: así el doble
+# clic no crea una segunda carpeta en otro lado y Obsidian sigue mirando la misma.
+# Se puede forzar con OBSIDIAN_VAULT=/ruta/a/tu/vault.
+deteccion_destino() {
+  local candidato
+  for candidato in "$HOME/Obsidian/Open_Vault" "$HOME/Documents/Open_Vault" "$HOME/Open_Vault" \
+                   "$HOME/Documentos/Open_Vault" "$HOME/Obsidian/OpenVault"; do
+    if [ -d "$candidato/Categorías" ] || [ -d "$candidato/Categorias" ] || [ -d "$candidato/.git" ]; then
+      printf '%s\n' "$candidato"
+      return 0
+    fi
+  done
+  printf '%s\n' "$HOME/Obsidian/Open_Vault"
+}
+
 # --- Python (solo para la vista web) ---------------------------------------
 # En Windows el PATH suele traer el Python de la tienda de Microsoft, que arranca
 # pero no tiene nada instalado: por eso se prueba cada candidato antes de usarlo.
@@ -70,15 +86,21 @@ preparar_python() {
 }
 
 # --- Traer las capturas ----------------------------------------------------
+# Solo viajan las notas: el `.git` del servidor (con su configuración y su clave) y
+# la carpeta `.obsidian` son de cada máquina. Sin este filtro, el historial del
+# servidor pisaba el de la computadora y el remoto quedaba configurado con la clave
+# del servidor, que acá no existe.
+EXCLUIR="--exclude=./.git --exclude=./.obsidian --exclude=./.trash"
+
 huella_servidor() {
-  ssh "$SERVIDOR" "cd '$VAULT_REMOTO' && find . -type f -print0 | xargs -0 md5sum"
+  ssh "$SERVIDOR" "cd '$VAULT_REMOTO' && find . -type f -not -path './.git/*' -not -path './.obsidian/*' -not -path './.trash/*' -print0 | xargs -0 md5sum"
 }
 
 bajar_vault() {
   local destino="$1"
   mkdir -p "$destino"
   info "Trayendo las capturas desde $SERVIDOR:$VAULT_REMOTO"
-  if ssh "$SERVIDOR" "tar czf - -C '$VAULT_REMOTO' ." | tar xzf - -C "$destino"; then
+  if ssh "$SERVIDOR" "tar czf - -C '$VAULT_REMOTO' $EXCLUIR ." | tar xzf - -C "$destino"; then
     info "Copia local: $destino"
     return 0
   fi
@@ -88,6 +110,48 @@ bajar_vault() {
   fi
   error "No pude traer nada del servidor y no hay copia local."
   return 1
+}
+
+# Cuando una captura cambia de tema, en el servidor se mueve de carpeta; acá la
+# copia vieja quedaría duplicada en dos carpetas. Esto borra de tu copia lo que ya
+# no existe en el servidor, y **solo** dentro de lo que administra el proyecto:
+# tus propios archivos y la configuración de Obsidian nunca se tocan.
+CARPETAS_ADMINISTRADAS="Categorías Temas Attachments"
+MAPA_VAULT="Mapa del vault.md"
+
+purgar_borrados() {
+  local destino="$1" archivo relativo borrados=0 lista
+  [ -d "$destino" ] || return 0
+  lista="$(mktemp)"
+  if ! ssh "$SERVIDOR" "cd '$VAULT_REMOTO' && find . -type f -not -path './.git/*' -not -path './.obsidian/*'" > "$lista" 2>/dev/null; then
+    aviso "No pude leer la lista del servidor: no borro nada de tu copia."
+    rm -f "$lista"
+    return 0
+  fi
+
+  local rutas=""
+  local carpeta
+  for carpeta in $CARPETAS_ADMINISTRADAS; do
+    [ -d "$destino/$carpeta" ] && rutas="$rutas $destino/$carpeta"
+  done
+  [ -f "$destino/$MAPA_VAULT" ] && rutas="$rutas $destino/$MAPA_VAULT"
+
+  # shellcheck disable=SC2086
+  while IFS= read -r archivo; do
+    relativo="${archivo#"$destino"/}"
+    if grep -Fxq "./$relativo" "$lista"; then
+      continue
+    fi
+    rm -f "$archivo"
+    borrados=$((borrados + 1))
+  done < <(find $rutas -type f 2>/dev/null)
+  rm -f "$lista"
+  [ "$borrados" -eq 0 ] || info "$borrados archivos que ya no están en el servidor (notas movidas o borradas)"
+
+  for carpeta in $CARPETAS_ADMINISTRADAS; do
+    [ -d "$destino/$carpeta" ] || continue
+    find "$destino/$carpeta" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  done
 }
 
 # Borra del servidor solo lo que se verificó acá. Si algo no coincide, no se toca:
@@ -140,6 +204,23 @@ sincronizar_git() {
     git -C "$destino" init --quiet -b main
     printf '%s\n' "$GITIGNORE_VAULT" > "$destino/.gitignore"
   fi
+
+  if [ -z "$(git -C "$destino" remote)" ]; then
+    aviso "Todavía no hay un remoto configurado: no puedo subir el vault."
+    aviso "Una vez: git -C \"$destino\" remote add origin <tu-repo-privado>.git"
+  fi
+
+  local rama
+  rama="$(git -C "$destino" rev-parse --abbrev-ref HEAD)"
+
+  # El servidor también escribe en este repo: antes de commitear se trae lo suyo.
+  # Si no se hiciera, los dos historiales se separan y el push de acá rebota.
+  if git -C "$destino" rev-parse --verify --quiet "origin/$rama" >/dev/null 2>&1; then
+    if ! git -C "$destino" pull --rebase --autostash --quiet origin "$rama"; then
+      aviso "No pude traer lo último de GitHub: sigo con tu copia local."
+    fi
+  fi
+
   # El commit se hace siempre, aunque no haya remoto: así el histórico local
   # arranca desde la primera captura y conectar el remoto después es un paso más.
   git -C "$destino" add -A
@@ -153,16 +234,21 @@ sincronizar_git() {
   fi
 
   if [ -z "$(git -C "$destino" remote)" ]; then
-    aviso "Todavía no hay un remoto configurado: no puedo subir el vault."
-    aviso "Una vez: git -C \"$destino\" remote add origin <tu-repo-privado>.git"
     return 0
   fi
 
-  local rama
-  rama="$(git -C "$destino" rev-parse --abbrev-ref HEAD)"
   if git -C "$destino" push --quiet origin "$rama"; then
     info "Subido a GitHub: en el celular, Obsidian → Git → Pull y ya lo ves"
-  else
-    aviso "No pude subir a GitHub: revisá el remoto y tus credenciales (git -C \"$destino\" push)"
+    return 0
   fi
+
+  # El servidor también sube (cada 5 minutos): si subió algo entre nuestro rebase y
+  # el push, alcanza con volver a traer y empujar. Otra vez no: si falla de nuevo es
+  # credenciales o remoto, y eso se avisa en vez de reintentar en loop.
+  if git -C "$destino" pull --rebase --autostash --quiet origin "$rama" \
+     && git -C "$destino" push --quiet origin "$rama"; then
+    info "Subido a GitHub (después de traer lo que había subido el servidor)"
+    return 0
+  fi
+  aviso "No pude subir a GitHub: revisá el remoto y tus credenciales (git -C \"$destino\" push)"
 }

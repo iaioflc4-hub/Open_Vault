@@ -3,14 +3,22 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from open_vault.classify import UNCATEGORIZED, classify, classify_or
+from open_vault.classify import UNCATEGORIZED, classify, etiqueta_explicita
 from open_vault.enrich import hashtags, tags
 from open_vault.grafo import MAPA, TEMAS_DIR, tejer
-from open_vault.links import vtt_to_text, youtube_id
+from open_vault.links import vtt_to_text, ytdlp_metadata, youtube_id
 from open_vault.pdf import pypdf_available, text_of_pdf
 from open_vault.reclasificar import reclasificar
-from open_vault.vault import save_note, save_video_reference
+from open_vault.rehacer import notas_pendientes, titulo_parece_url
+from open_vault.vault import (
+    completar_nota_video,
+    reemplazar_titulo,
+    reemplazar_transcripcion,
+    save_note,
+    save_video_reference,
+)
 
 
 class ClassifyTests(unittest.TestCase):
@@ -31,12 +39,31 @@ class ClassifyTests(unittest.TestCase):
             self.assertIn('category: "Tecnología"', texto)
             self.assertIn("tecnologia", str(nota.parent))
 
-    def test_sin_pistas_usa_el_respaldo_del_formato(self) -> None:
-        self.assertEqual(classify_or("bla bla", "Videos"), "Videos")
+    def test_sin_pistas_no_inventa_un_tema(self) -> None:
+        """Sin contenido ni etiqueta no hay categoría: nunca el formato del archivo."""
         self.assertEqual(classify("texto sin términos conocidos"), UNCATEGORIZED)
+        with tempfile.TemporaryDirectory() as temp:
+            nota = save_video_reference(Path(temp), title="Video del 2026-10-27", source="https://youtu.be/x")
+            self.assertIn("por-clasificar", str(nota.parent))
 
     def test_hashtag_manda_en_la_clasificacion(self) -> None:
         self.assertEqual(classify("#seguridad #linux", title="charla"), "Seguridad")
+
+    def test_una_etiqueta_desconocida_define_el_tema(self) -> None:
+        """El vault se ordena con las palabras de quien lo usa, no solo con las listas."""
+        self.assertEqual(classify("", title="avances de la huerta #huerta-organica"), "Huerta organica")
+        self.assertEqual(etiqueta_explicita("clase de #Huerta"), "Huerta")
+        self.assertEqual(etiqueta_explicita("sin etiquetas"), "")
+
+    def test_el_pie_del_mensaje_decide_el_tema(self) -> None:
+        """Un video sin transcripción pero con pie temático se clasifica por el pie."""
+        with tempfile.TemporaryDirectory() as temp:
+            nota = save_video_reference(
+                Path(temp),
+                title="mirá esto #seguridad",
+                source="https://youtu.be/xyz",
+            )
+            self.assertIn("seguridad", str(nota.parent))
 
 
 class HashtagTests(unittest.TestCase):
@@ -46,6 +73,16 @@ class HashtagTests(unittest.TestCase):
     def test_las_etiquetas_a_mano_van_primero(self) -> None:
         resultado = tags("#linux texto texto texto")
         self.assertEqual(resultado[0], "linux")
+
+    def test_un_color_no_es_un_tema(self) -> None:
+        """Los códigos de color del SVG aparecían en el gráfico como temas."""
+        self.assertEqual(hashtags("<svg fill=\"#00cc66\">#linux</svg>"), ["linux"])
+
+    def test_no_etiqueta_dominios_ni_palabras_de_la_plantilla(self) -> None:
+        limpio = tags("https://youtu.be/abc youtu.be video transcripción pendiente software")
+        self.assertIn("software", limpio)
+        for ruido in ("youtu", "video", "transcripción", "pendiente"):
+            self.assertNotIn(ruido, limpio)
 
 
 class VideoLinkTests(unittest.TestCase):
@@ -65,6 +102,30 @@ class VideoLinkTests(unittest.TestCase):
 
     def test_vtt_vacio_no_rompe(self) -> None:
         self.assertEqual(vtt_to_text(""), "")
+
+    def test_lee_la_ficha_aunque_ytdlp_salga_con_error(self) -> None:
+        """Un carrusel de Instagram: la ficha viene completa y el código de salida
+        igual es error, porque las fotos no tienen formato de video."""
+        import subprocess
+
+        salida = '{"id": "x", "title": "Post by alguien", "description": "texto #osint"}'
+        with patch(
+            "open_vault.links._ytdlp",
+            return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout=salida, stderr="ERROR"),
+        ):
+            info = ytdlp_metadata("https://www.instagram.com/p/x/")
+        self.assertIsNotNone(info)
+        self.assertEqual(info.title, "Post by alguien")
+        self.assertIn("osint", info.extra_tags)
+
+    def test_sin_json_no_inventa_una_ficha(self) -> None:
+        import subprocess
+
+        with patch(
+            "open_vault.links._ytdlp",
+            return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="ERROR: no hay nada", stderr=""),
+        ):
+            self.assertIsNone(ytdlp_metadata("https://www.instagram.com/p/x/"))
 
 
 class GrafoTests(unittest.TestCase):
@@ -97,6 +158,33 @@ class GrafoTests(unittest.TestCase):
             segunda = tejer(vault)
             self.assertEqual(segunda["enlazadas"], 0)
 
+    def test_saca_del_mapa_los_temas_que_quedaron_sin_capturas(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            vault = Path(temp)
+            nota = save_note(
+                vault, title="Nota", content="texto con #viejo", source="https://e.org/a", kind="web"
+            )
+            tejer(vault)
+            self.assertTrue((vault / TEMAS_DIR / "viejo.md").is_file())
+            # La nota se reclasifica y deja de usar ese tema: el mapa no debe
+            # seguir mostrándolo como un punto suelto. El orden es el del
+            # sincronizador: primero la clasificación, después los enlaces.
+            nota.write_text(nota.read_text(encoding="utf-8").replace("#viejo", "#nuevo"), encoding="utf-8")
+            reclasificar(vault)
+            tejer(vault)
+            self.assertFalse((vault / TEMAS_DIR / "viejo.md").exists())
+            self.assertTrue((vault / TEMAS_DIR / "nuevo.md").is_file())
+
+    def test_no_borra_una_nota_de_tema_escrita_a_mano(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            vault = Path(temp)
+            save_note(vault, title="Nota", content="texto", source="https://e.org/a", kind="web")
+            carpeta = vault / TEMAS_DIR
+            carpeta.mkdir(parents=True, exist_ok=True)
+            (carpeta / "mi-tema.md").write_text("---\ntitle: Mi tema\n---\n\nlo que escribí\n", encoding="utf-8")
+            tejer(vault)
+            self.assertTrue((carpeta / "mi-tema.md").is_file())
+
 
 class ReclasificarTests(unittest.TestCase):
     def test_mueve_la_nota_al_tema_correcto(self) -> None:
@@ -127,6 +215,58 @@ class ReclasificarTests(unittest.TestCase):
             resumen = reclasificar(vault, simular=True)
             self.assertEqual(resumen["movidas"], 1)
             self.assertTrue(nota.is_file())
+
+
+class RehacerTests(unittest.TestCase):
+    def test_encuentra_solo_las_notas_de_enlaces_pendientes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            vault = Path(temp)
+            pendiente = save_video_reference(vault, title="Video", source="https://youtu.be/abc")
+            save_video_reference(vault, title="Otro", source="https://youtu.be/def", transcript="ya está")
+            save_note(vault, title="Nota", content="texto", source="telegram://text/1", kind="texto")
+            self.assertEqual(notas_pendientes(vault), [pendiente])
+
+    def test_escribe_la_transcripcion_sin_perder_lo_demas(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            nota = save_video_reference(Path(temp), title="Video", source="https://youtu.be/abc")
+            texto = nota.read_text(encoding="utf-8")
+            nuevo = reemplazar_transcripcion(texto, "hola mundo", "subtítulos del propio video (es)")
+            self.assertIn("## Transcripción (subtítulos del propio video (es))", nuevo)
+            self.assertIn("hola mundo", nuevo)
+            self.assertNotIn("Transcripción pendiente", nuevo)
+            self.assertNotIn("TRANSCRIPTION_ENGINE", nuevo)
+            self.assertIn("## Fuente original", nuevo)
+            self.assertIn("## Notas", nuevo)
+
+    def test_agrega_la_descripcion_sin_perder_la_transcripcion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            nota = save_video_reference(Path(temp), title="Video", source="https://youtu.be/abc")
+            texto = nota.read_text(encoding="utf-8")
+            nuevo = completar_nota_video(
+                texto, description="Pie con #osint", transcript="hola", transcript_origen="subtítulos"
+            )
+            self.assertIn("## Descripción original", nuevo)
+            self.assertIn("Pie con #osint", nuevo)
+            self.assertIn("## Transcripción (subtítulos)", nuevo)
+            self.assertNotIn("Transcripción pendiente", nuevo)
+
+    def test_completar_sin_datos_no_cambia_nada(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            nota = save_video_reference(Path(temp), title="Video", source="https://youtu.be/abc")
+            texto = nota.read_text(encoding="utf-8")
+            self.assertEqual(completar_nota_video(texto), texto)
+
+    def test_la_transcripcion_vacia_no_cambia_nada(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            nota = save_video_reference(Path(temp), title="Video", source="https://youtu.be/abc")
+            texto = nota.read_text(encoding="utf-8")
+            self.assertEqual(reemplazar_transcripcion(texto, "   "), texto)
+
+    def test_reconoce_un_titulo_que_es_una_url(self) -> None:
+        self.assertTrue(titulo_parece_url("www.instagram.com/p/De-a-xmESTg"))
+        self.assertTrue(titulo_parece_url("https://youtu.be/abc"))
+        self.assertFalse(titulo_parece_url("Cómo hacer pan en casa"))
+        self.assertIn('title: "Hola"', reemplazar_titulo('---\ntitle: "www.x.com"\n---\n', "Hola"))
 
 
 class PdfTests(unittest.TestCase):

@@ -18,40 +18,51 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from .enrich import hashtags
+from .enrich import hashtags, tags
 from .reclasificar import _campo, es_nota_de_captura
 
 TEMAS_DIR = "Temas"
 MAPA = "Mapa del vault.md"
 MARCA = "<!-- openvault:temas -->"
-TAGS_RE = re.compile(r"^tags:\s*(\[.*\])\s*$", re.MULTILINE)
 CATEGORY_RE = re.compile(r'^category:\s*("?)(.*?)\1\s*$', re.MULTILINE)
 MAX_TEMAS_POR_NOTA = 6
+
+
+def cuerpo_del_contenido(texto: str) -> str:
+    """Solo el contenido de la captura, sin las secciones que agrega el programa.
+
+    Es la diferencia entre un gráfico útil y uno lleno de ruido: contando las
+    palabras del encabezado y de los títulos de sección, cualquier video quedaba
+    conectado a los temas "video" y "transcripción".
+    """
+    marca = "## Contenido íntegro"
+    if marca not in texto:
+        return texto
+    resto = texto.split(marca, 1)[1]
+    return resto.split("> [!quote] Sin resumen", 1)[0]
 
 
 def etiquetas_de(texto: str, *, palabras: int = 2) -> list[str]:
     """Temas a los que se conecta una captura, en orden de importancia.
 
     Manda lo que eligió la persona (`#etiqueta`), después el tema clasificado y
-    recién al final un par de palabras frecuentes. El motivo es el gráfico: con
-    las diez palabras del encabezado, cinco capturas generan veinte temas y el
-    mapa queda ilegible en vez de útil.
+    recién al final un par de palabras frecuentes del contenido. El motivo es el
+    gráfico: con las diez palabras del encabezado, cinco capturas generan veinte
+    temas y el mapa queda ilegible en vez de útil.
+
+    Las palabras se recalculan acá, del contenido, en vez de leer el `tags:` del
+    encabezado: ese encabezado se escribió cuando se guardó la nota y no se toca
+    después, así que traería las reglas viejas a un mapa nuevo.
     """
     a_mano = hashtags(texto, limit=MAX_TEMAS_POR_NOTA)
     categoria = _campo(texto, CATEGORY_RE).casefold()
-    del_encabezado: list[str] = []
-    match = TAGS_RE.search(texto)
-    if match:
-        try:
-            del_encabezado = [
-                str(valor).strip().casefold() for valor in json.loads(match.group(1)) if str(valor).strip()
-            ]
-        except ValueError:
-            del_encabezado = []
+    del_contenido = [
+        etiqueta.casefold() for etiqueta in tags(cuerpo_del_contenido(texto), limit=palabras + 2)
+    ]
     elegidas = list(a_mano)
     if categoria and categoria != "por clasificar":
         elegidas.append(categoria)
-    for palabra in del_encabezado:
+    for palabra in del_contenido:
         if len(elegidas) >= len(a_mano) + 1 + palabras:
             break
         elegidas.append(palabra)
@@ -86,7 +97,7 @@ def _bloque_temas(etiquetas: list[str]) -> str:
 def tejer(vault: Path, *, simular: bool = False) -> dict[str, int]:
     """Conecta las capturas con sus temas y rehace el mapa. Idempotente."""
     vault = Path(vault)
-    resumen = {"revisadas": 0, "enlazadas": 0, "temas": 0, "sin_cambios": 0}
+    resumen = {"revisadas": 0, "enlazadas": 0, "temas": 0, "sin_cambios": 0, "huerfanos": 0}
     capturas = sorted(p for p in vault.rglob("*.md") if es_nota_de_captura(p, vault))
     if not capturas:
         return resumen
@@ -118,11 +129,31 @@ def tejer(vault: Path, *, simular: bool = False) -> dict[str, int]:
     carpeta.mkdir(parents=True, exist_ok=True)
     for etiqueta, notas in sorted(por_tema.items()):
         (carpeta / f"{etiqueta}.md").write_text(_nota_de_tema(etiqueta, notas), encoding="utf-8")
-    # Un tema que se quedó sin capturas (porque cambió la clasificación) no se borra:
-    # puede ser un tema que la persona usa a mano. Solo se deja de actualizar.
+
+    # Un tema que se quedó sin capturas se saca del gráfico: si no, el mapa se llena
+    # de puntos sueltos ("video", "transcripción") que ya no llevan a ninguna nota.
+    # Solo se borran los que armó este programa; una nota de tema escrita a mano no
+    # tiene el `type: tema` de acá y se deja como está.
+    resumen["huerfanos"] = _limpiar_huerfanos(carpeta, por_tema)
 
     (vault / MAPA).write_text(_mapa(por_tema), encoding="utf-8")
     return resumen
+
+
+def _limpiar_huerfanos(carpeta: Path, por_tema: dict[str, list[str]]) -> int:
+    borrados = 0
+    for archivo in sorted(carpeta.glob("*.md")):
+        if archivo.stem in por_tema:
+            continue
+        try:
+            texto = archivo.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if 'type: "tema"' not in texto:
+            continue
+        archivo.unlink()
+        borrados += 1
+    return borrados
 
 
 def _nota_de_tema(etiqueta: str, notas: list[str]) -> str:
@@ -169,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     resumen = tejer(Path(opciones.vault), simular=opciones.simular)
     print(
         f"{resumen['revisadas']} capturas, {resumen['enlazadas']} con enlaces nuevos, "
-        f"{resumen['temas']} temas, {resumen['sin_cambios']} sin cambios"
+        f"{resumen['temas']} temas, {resumen['sin_cambios']} sin cambios, "
+        f"{resumen['huerfanos']} temas huérfanos borrados"
     )
     return 0
 

@@ -84,12 +84,18 @@ Las notas son Markdown común, así que Obsidian las abre tal cual. Un comando t
 las capturas del servidor a tu carpeta local, las guarda en git y las sube:
 
 ```bash
-bash visor/sincronizar.sh          # Linux, macOS o Git Bash en Windows
+bash visor/sincronizar.sh          # una corrida: trae, guarda en git y sube
+bash visor/automatico.sh           # deja corriendo: busca capturas nuevas cada 60 s
 ```
 
-En Windows: doble clic en `visor\sincronizar.cmd`. La carpeta por defecto es
-`~/Obsidian/Open_Vault`; si querés otro lugar (por ejemplo dentro del vault que ya
-usás), pasá `OBSIDIAN_VAULT`:
+En Windows: doble clic en `visor\sincronizar.cmd` para una corrida, o en
+`visor\automatico.cmd` para que se actualice solo. Con el modo automático **no hace
+falta cerrar y abrir Obsidian**: las notas que le mandás al bot aparecen solas,
+porque el sync las baja cada minuto. La ventana se puede minimizar y se corta con
+Ctrl+C.
+
+La carpeta se detecta sola entre las habituales (`~/Obsidian/Open_Vault`,
+`~/Documents/Open_Vault`, `~/Open_Vault`); si tu copia está en otro lado, pasala:
 
 ```bash
 OBSIDIAN_VAULT="$HOME/Documents/Open_Vault" bash visor/sincronizar.sh
@@ -100,6 +106,18 @@ búsqueda, enlaces, imágenes y fórmulas funcionando sobre archivos comunes. El
 comando hace un commit por corrida, así que queda el historial de qué llegó y
 cuándo.
 
+Del otro lado, el servidor corre su propio temporizador cada 5 minutos:
+reclasifica las notas con las reglas del día, vuelve a tejer los enlaces del
+gráfico y sube los cambios a GitHub. Los dos caminos se juntan: el servidor sube,
+tu computadora trae y sube lo que edites a mano (antes de subir hace un
+`pull --rebase`, y si el servidor subió algo en el medio, reintenta una vez).
+
+Cuando una captura cambia de tema, el servidor la mueve de carpeta. Tu copia no se
+queda con las dos: borra la vieja, pero **solo** dentro de `Categorías/`, `Temas/`,
+`Attachments/` y el mapa. Tus archivos y la configuración de Obsidian
+(`.obsidian/`) no se tocan nunca, y el `.git` del servidor tampoco viaja: cada
+máquina tiene el suyo.
+
 #### Para leerlo en el celular
 
 El plugin **Git** de Obsidian hace lo mismo que el script: clonás el repo una vez
@@ -107,9 +125,12 @@ y hacés *Pull* cuando quieras. Una sola vez, en tu computadora:
 
 ```bash
 gh repo create MiUsuario/Open_Vault-notas --private     # o creálo desde la web
-git -C ~/Obsidian/Open_Vault remote add origin git@github.com:MiUsuario/Open_Vault-notas.git
+git -C ~/Obsidian/Open_Vault remote add origin https://github.com/MiUsuario/Open_Vault-notas.git
 bash visor/sincronizar.sh                                # trae y sube
 ```
+
+Si el push pide credenciales, alcanza con tener `gh` autenticado
+(`gh auth login`): git usa su credencial y no hay que pegar ningún token.
 
 Y en el celular: Obsidian + plugin Git, clonás ese repo privado (con un token de
 GitHub que solo pueda leerlo) y hacés *Pull*. Después de cada
@@ -202,9 +223,12 @@ raíz de un dominio o dentro de una subcarpeta, y también abriendo el
 - Linux con Python 3.11 o superior (probado en Debian 13).
 - Un token de bot de Telegram (gratis, con [@BotFather](https://t.me/BotFather)).
 - Opcional: `tesseract-ocr` para el OCR, `ffmpeg` para las miniaturas y los
-  cuadros del video, y `faster-whisper` si querés transcripción. `install.sh`
-  instala tesseract y ffmpeg si faltan; la transcripción se instala aparte, con
-  una línea, porque agrega unos 80 MB de dependencias.
+  cuadros del video, `poppler-utils` para leer PDF escaneados y `faster-whisper`
+  si querés transcripción. `install.sh` instala lo del sistema que falte (incluidos
+  `yt-dlp` y `pypdf` para links y PDF); la transcripción va aparte, con una línea,
+  porque agrega unos 350 MB de dependencias. Para YouTube conviene además un
+  runtime de JavaScript (`deno`) en el servidor: sin él, yt-dlp avisa que la
+  extracción queda degradada.
 - Recursos medidos en el servidor de referencia (1 vCPU, 965 MB de RAM, 9.8 GB de
 disco): el bot y la vista web juntos ocupan unos 200 MB de disco y el servicio
 del bot queda con un techo de 300 MB de memoria. El vault crece con las
@@ -298,6 +322,10 @@ puntual a mano.
 | `TRANSCRIPTION_ENGINE` | vacío | Motor local de transcripción (`faster-whisper`); vacío = apagada |
 | `TRANSCRIPTION_MODEL` | `tiny` | Modelo de Whisper: `tiny`, `base` o `small` |
 | `TRANSCRIPTION_LANGUAGE` | `es` | Idioma esperado del audio |
+| `YTDLP_COOKIES` | vacío | Archivo de cookies del navegador para los sitios que bloquean la IP del servidor |
+| `LINK_AUDIO_MAX_SECONDS` | `1800` | Hasta qué minuto de un video se baja el audio para transcribir |
+| `PDF_MAX_PAGES_TEXT` | `300` | Cuántas páginas se leen de un PDF |
+| `PDF_MAX_PAGES_OCR` | `10` | Cuántas páginas se OCR-ean de un PDF escaneado |
 | `VISOR_SALIDA` | `/var/www/openvault-web` | Carpeta donde se genera la vista web |
 | `VISOR_BASE_URL` | vacío | URL canónica del sitio, si lo publicás en un subdominio |
 
@@ -312,15 +340,70 @@ puntual a mano.
 - **Video**: si lo mandás como archivo, queda con miniatura, la duración y el
   **texto que aparece en pantalla** (OCR de unos cuadros repartidos por el video,
   que se tiran después de leerlos). Si encendés `TRANSCRIPTION_ENGINE`, se le
-  suma la transcripción del audio, hecha en la misma máquina. Si es un link, queda
-  la referencia: no se descarga el video de YouTube ni de ningún otro sitio.
+  suma la transcripción del audio, hecha en la misma máquina. Un **video redondo**
+  o un **GIF** pasan por el mismo camino (son mp4 igual).
+- **Link de video** (YouTube, Instagram, TikTok, Vimeo…): se busca el contenido de
+  verdad, en este orden: subtítulos del propio video, subtítulos automáticos y, si
+  no hay, el audio para transcribirlo acá. Una publicación de Instagram que no es
+  video (un carrusel de fotos) igual trae título, autor y pie completo, que es con
+  lo que se clasifica. Ver *YouTube desde un servidor*, más abajo.
+- **PDF**: se guarda el original y se le saca el texto; si es un escaneo (sin
+  texto seleccionable) se convierte cada página en imagen y se lee con OCR.
 - **Audio o nota de voz**: se guarda el archivo y, con el motor de transcripción
   encendido, el texto. El audio de Telegram llega en `.oga`, así que se convierte
   con ffmpeg antes de transcribir (nada sale de la máquina).
 - **`/id`**: muestra tu ID numérico de Telegram (lo usa el asistente para
   autorizarte sin que copies números).
-- Después de capturar, un `sincronizar.cmd` en tu computadora y un *Pull* en el
-  celular: tus notas viajan solas.
+- Después de capturar, un `sincronizar.cmd` (o el modo automático) en tu
+  computadora y un *Pull* en el celular: tus notas viajan solas.
+
+### Cómo se clasifica cada nota
+
+La categoría sale del contenido, nunca del formato: un video no va a "Videos", va
+al tema del que habla. El orden es:
+
+1. las listas de temas de `classify.py`, con el **título pesando el triple** que el
+   cuerpo — y el pie que escribís en Telegram cuenta como título;
+2. una **etiqueta escrita a mano**: si mandás `#seguridad` o `#huerta-organica`,
+   ese es el tema, aunque la palabra no esté en ninguna lista;
+3. si no hay ninguna pista, `Por clasificar`, y el bot te lo dice para que le
+   mandes una palabra o una etiqueta y lo mueva.
+
+Cada captura se enlaza además a notas de tema (`[[Temas/seguridad]]`) y esas notas
+listan lo que llegó. El `Mapa del vault.md` junta todos los temas: es la puerta de
+entrada al gráfico de Obsidian. Las palabras del gráfico salen del contenido (sin
+direcciones web, sin códigos de color, sin palabras de la propia plantilla), así
+que el mapa conecta temas y no formatos.
+
+### Rehacer los enlaces que quedaron pendientes
+
+Si un link quedó sin transcripción —porque en ese momento no se pudo leer, o porque
+el sitio bloqueaba la IP— no hace falta reenviarlo:
+
+```bash
+/opt/openvault/.venv/bin/python -m open_vault.rehacer --vault /srv/obsidian/Open_Vault
+/opt/openvault/.venv/bin/python -m open_vault.rehacer --simular     # qué haría, sin escribir
+/opt/openvault/.venv/bin/python -m open_vault.rehacer --limite 5    # solo los primeros 5
+```
+
+Vuelve a pedir el contenido, escribe lo que encuentra **en la misma nota** (sin
+tocar nada de lo que ya estaba) y, si el título era la URL pelada, le pone el real.
+
+### YouTube desde un servidor
+
+YouTube pide "confirmá que no sos un robot" cuando la descarga viene de una IP de
+servidor. Se destraba con una cookie de tu navegador:
+
+1. Exportá las cookies de `youtube.com` con una extensión tipo *Get cookies.txt*
+   (formato Netscape).
+2. Copialas al servidor y cerrá los permisos:
+   `sudo cp cookies.txt /etc/openvault/youtube-cookies.txt && sudo chmod 600 /etc/openvault/youtube-cookies.txt`
+3. Agregá al `.env` `YTDLP_COOKIES=/etc/openvault/youtube-cookies.txt` y reiniciá:
+   `sudo systemctl restart open-vault`.
+
+Sin cookies, los links de YouTube igual quedan con su ficha real (título, canal,
+descripción, miniatura) y **clasificados por ese contenido**; lo único que falta
+es el texto, y la nota lo dice.
 
 ## Privacidad y límites
 

@@ -170,13 +170,22 @@ def _ytdlp(extra: list[str], *, timeout: int = 240) -> subprocess.CompletedProce
 
 
 def ytdlp_metadata(url: str) -> LinkInfo | None:
-    """Ficha del video con yt-dlp (sirve para casi cualquier sitio)."""
+    """Ficha del video con yt-dlp (sirve para casi cualquier sitio).
+
+    No se mira el código de salida a propósito: en un carrusel de Instagram yt-dlp
+    devuelve la ficha completa (título, autor, texto del pie) y **igual** sale con
+    error, porque los elementos del carrusel son fotos y no tienen video. Antes
+    eso se tomaba como "no pude leer la ficha" y la nota quedaba sin el pie ni las
+    etiquetas, que es justo con lo que se clasifica.
+    """
     resultado = _ytdlp(["--dump-single-json", "--skip-download", url], timeout=180)
-    if resultado is None or resultado.returncode != 0 or not resultado.stdout.strip():
+    if resultado is None or not resultado.stdout.strip():
         return None
     try:
-        datos = json.loads(resultado.stdout)
-    except ValueError:
+        datos = json.loads(resultado.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    if not isinstance(datos, dict):
         return None
     info = LinkInfo(
         url=url,
@@ -189,6 +198,8 @@ def ytdlp_metadata(url: str) -> LinkInfo | None:
     )
     if datos.get("is_live"):
         info.note += " (transmisión en vivo)"
+    if datos.get("_type") == "playlist" and datos.get("playlist_count"):
+        info.note += f" (publicación con {datos['playlist_count']} elementos)"
     info.extra_tags = hashtags(f"{info.title} {info.description}")
     return info
 
@@ -241,6 +252,37 @@ def ytdlp_audio(url: str, folder: Path, *, max_seconds: int = 0, timeout: int = 
     return None
 
 
+def transcript_of_link(
+    info: LinkInfo, trabajo: Path, *, engine: str, language: str = "", model: str = ""
+) -> tuple[str, str]:
+    """Transcripción de un enlace: subtítulos si los hay y, si no, el audio local.
+
+    Existe para que el bot y el rehacer de notas hagan exactamente lo mismo: no
+    hay dos caminos que puedan divergir en qué se transcribe y qué no.
+    """
+    if info.transcript:
+        return info.transcript, info.transcript_source
+    if info.audio_path is None:
+        # El motivo ya quedó anotado en `info.note` al buscar el contenido.
+        return "", ""
+    from .media import extract_audio
+    from .transcribe import available, transcribe
+
+    if not available(engine):
+        info.note += " · el audio se bajó pero la transcripción está apagada"
+        return "", ""
+    wav = trabajo / "audio.wav"
+    if not extract_audio(info.audio_path, wav):
+        info.note += " · no pude leer el audio (¿falta ffmpeg?)"
+        return "", ""
+    try:
+        texto = transcribe(wav, language=language, model=model)
+    except Exception as exc:  # noqa: BLE001 - la nota se guarda igual, sin transcripción
+        info.note += f" · no pude transcribir: {exc}"
+        return "", ""
+    return texto, "transcripción local del audio" if texto else ""
+
+
 def fetch_video_link(url: str, trabajo: Path) -> LinkInfo:
     """Todo lo que se puede sacar de un enlace de video, sin fallar en silencio.
 
@@ -285,6 +327,7 @@ __all__ = [
     "LinkInfo",
     "fetch_video_link",
     "piped_metadata",
+    "transcript_of_link",
     "vtt_to_text",
     "ytdlp_audio",
     "ytdlp_available",

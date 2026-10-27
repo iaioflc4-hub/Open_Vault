@@ -18,7 +18,7 @@ PROYECTO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=visor/comun.sh
 . "$PROYECTO/visor/comun.sh"
 
-DESTINO="${OBSIDIAN_VAULT:-$HOME/Obsidian/Open_Vault}"
+DESTINO="${OBSIDIAN_VAULT:-$(deteccion_destino)}"
 HACER_GIT=1
 MOVER=0
 
@@ -44,6 +44,10 @@ bajar_vault "$DESTINO"
 
 if [ "$MOVER" -eq 1 ]; then
   vaciar_servidor "$DESTINO" "$BASE/manifiesto.md5"
+else
+  # Sin --mover el servidor conserva todo: hay que limpiar acá lo que ya no existe,
+  # si no la misma nota queda en la carpeta vieja y en la nueva.
+  purgar_borrados "$DESTINO"
 fi
 
 if [ "$HACER_GIT" -eq 1 ]; then

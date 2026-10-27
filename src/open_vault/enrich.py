@@ -202,13 +202,39 @@ def _strip_accents(value: str) -> str:
 
 
 HASHTAG_RE = re.compile(r"#([\wáéíóúüñÁÉÍÓÚÜÑ][\wáéíóúüñÁÉÍÓÚÜÑ-]{1,29})", re.UNICODE)
+# Direcciones y dominios: aportaban "youtu", "instagram" o "github" como temas del
+# gráfico, que no dicen nada del contenido de la captura.
+URL_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?[\w-]+(?:\.[\w-]+)*\."
+    r"(?:com|org|net|edu|gov|io|tv|be|me|co|es|ar|mx|cl|pe|uy|py|br|info|app|dev|xyz|sh|ai|uk|de|fr|it|ru|jp|cn|site|blog)"
+    r"(?:/\S*)?",
+    re.IGNORECASE,
+)
+COLOR_RE = re.compile(r"^[0-9a-f]{3,8}$")
+
+# Palabras que escribe el propio programa (títulos de sección, tipos de archivo) y
+# que no dicen nada del tema: si no se filtran, el gráfico se llena de notas de
+# tema "video" o "transcripción" que no conectan nada.
+PALABRAS_PLANTILLA = {
+    "adjuntos", "archivo", "audio", "captura", "cifras", "contenido", "documento",
+    "duración", "destacadas", "estructura", "ficha", "formulas", "fórmulas", "fuente",
+    "imagen", "integro", "íntegro", "miniatura", "original", "pagina", "página", "paginas",
+    "páginas", "pendiente", "plataforma", "referencia", "resumen", "transcripcion",
+    "transcripción", "video", "videos",
+}
 
 
 def hashtags(text: str, *, limit: int = 8) -> list[str]:
-    """Etiquetas escritas a mano con `#`. Son las que más valen: las eligió alguien."""
+    """Etiquetas escritas a mano con `#`. Son las que más valen: las eligió alguien.
+
+    Se descartan los colores (`#00cc66`): aparecen en el código de los dibujos SVG
+    y en cualquier nota pegada, y un color no es un tema del que se esté hablando.
+    """
     vistas: list[str] = []
     for match in HASHTAG_RE.finditer(text or ""):
         etiqueta = match.group(1).casefold()
+        if COLOR_RE.fullmatch(etiqueta):
+            continue
         if etiqueta not in vistas:
             vistas.append(etiqueta)
         if len(vistas) >= limit:
@@ -219,13 +245,18 @@ def hashtags(text: str, *, limit: int = 8) -> list[str]:
 def tags(text: str, *, limit: int = 6) -> list[str]:
     """Etiquetas por frecuencia, sin listas negras de temas: solo palabras útiles.
 
-    Las que escribió la persona con `#` van primero y no se repiten.
+    Las que escribió la persona con `#` van primero y no se repiten. Antes de contar
+    se sacan las direcciones web (aportaban "youtu", "instagram") y no se cuentan
+    las palabras que escribe la propia plantilla de la nota.
     """
+    text = URL_RE.sub(" ", text or "")
     counts: dict[str, int] = {}
     order: dict[str, int] = {}
     for index, match in enumerate(WORD_RE.finditer(text)):
         word = match.group(0).strip("'_-").lower()
         if len(word) < 4 or word.isdigit() or word in STOPWORDS or _strip_accents(word) in STOPWORDS:
+            continue
+        if COLOR_RE.fullmatch(word) or word in PALABRAS_PLANTILLA or _strip_accents(word) in PALABRAS_PLANTILLA:
             continue
         counts[word] = counts.get(word, 0) + 1
         order.setdefault(word, index)
