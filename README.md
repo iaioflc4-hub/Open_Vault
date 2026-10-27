@@ -95,16 +95,46 @@ adjuntos embebidos (`![[Attachments/x.svg]]`), wikilinks, callouts (`> [!info]`)
 y fórmulas. Mermaid y MathJax quedan dentro del repo, así que la vista funciona
 sin depender de ningún CDN y sin pedirle nada a terceros (tampoco tipografías).
 
+### Leerlo en tu computadora (un comando, sin publicar nada)
+
+```bash
+bash visor/leer.sh          # Linux, macOS o Git Bash en Windows
+```
+
+En Windows: doble clic en `visor/leer.cmd`. El script trae una copia del vault
+desde tu servidor por SSH, arma la vista y la abre en `http://localhost:8000`.
+Nada sale a internet: el servidor escucha solo en `127.0.0.1` y con Ctrl+C se
+apaga. No necesita nginx, ni dominio, ni puertos abiertos.
+
+Variables útiles: `SERVIDOR` (host de tu `~/.ssh/config`), `PUERTO`, `BASE`
+(dónde guardar la copia) y `PYTHON` (para usar el entorno del proyecto).
+
+### Leerlo en el celular
+
+Sin instalar nada: poné el vault en un repositorio **privado** de GitHub. El
+visor de GitHub abre las notas en el navegador del celular, con sus imágenes y
+con los diagramas Mermaid dibujados (y soporta las fórmulas matemáticas). Para
+las carpetas y las fichas SVG se ve igual de bien, y no hay servidor tuyo
+involucrado.
+
+La otra opción es [Obsidian](https://obsidian.md) (gratis para uso personal) en
+el celular, apuntando a la carpeta del vault sincronizada por Git, Syncthing o
+la carpeta compartida que ya uses. No hace falta configurar nada del lado de
+Open_Vault: son archivos Markdown comunes.
+
+### En el servidor (opcional)
+
 ```bash
 sudo APP_DIR=/opt/openvault bash install.sh      # instala también la vista web
 sudo bash install.sh --sin-visor                 # solo el bot
 /opt/openvault/.venv-visor/bin/python -m open_vault.visor --forzar   # regenerar ahora
 ```
 
-Dónde publicarla es decisión tuya: una ruta de tu servidor web con contraseña
-(nginx), un puerto propio, o nada público y leerla por túnel SSH. El sitio usa
-**rutas relativas**, así que funciona igual en la raíz del dominio o dentro de
-una subcarpeta; si querés fijar la URL canónica, exportá `VISOR_BASE_URL`.
+El temporizador deja el sitio en `/var/www/openvault-web` (configurable con
+`VISOR_SALIDA`). Que lo publique un servidor web o no es decisión tuya: es una
+carpeta de HTML estático con **rutas relativas**, así que funciona igual en la
+raíz de un dominio o dentro de una subcarpeta, y también abriendo el
+`index.html` desde el disco.
 
 ## Requisitos
 

@@ -3,12 +3,45 @@ from __future__ import annotations
 import importlib.util
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from open_vault.visor import convertir_markdown
 
 VISTA_DISPONIBLE = importlib.util.find_spec("material") is not None
+
+
+class ServirTests(unittest.TestCase):
+    def test_serves_the_generated_site_on_localhost(self) -> None:
+        import threading
+        import urllib.request
+
+        from open_vault.visor import servir
+
+        with tempfile.TemporaryDirectory() as temp:
+            sitio = Path(temp)
+            (sitio / "index.html").write_text("<html><body>hola</body></html>", encoding="utf-8")
+            hilo = threading.Thread(target=servir, args=(sitio, 8731), daemon=True)
+            hilo.start()
+            respuesta = None
+            for _ in range(40):
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:8731/index.html", timeout=1) as respuesta:
+                        contenido = respuesta.read().decode("utf-8")
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("el servidor local no respondió")
+            self.assertIn("hola", contenido)
+
+    def test_refuses_to_serve_a_missing_site(self) -> None:
+        from open_vault.visor import servir
+
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(FileNotFoundError):
+                servir(Path(temp) / "no-existe", 8732)
 
 
 class CambiosTests(unittest.TestCase):

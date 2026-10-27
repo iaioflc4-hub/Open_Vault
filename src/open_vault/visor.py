@@ -413,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default=os.getenv("VISOR_BASE_URL", ""))
     parser.add_argument("--forzar", action="store_true", help="Regenera aunque no haya cambios en el vault")
     parser.add_argument("--bajar-assets", action="store_true", help="Solo descarga Mermaid y MathJax")
+    parser.add_argument("--servir", action="store_true", help="Deja el sitio servido en http://localhost para leerlo ya")
+    parser.add_argument("--puerto", type=int, default=int(os.getenv("VISOR_PUERTO", "8000")))
     opciones = parser.parse_args(argv)
 
     assets = Path(opciones.assets) if opciones.assets else Path(__file__).resolve().parents[2] / "visor" / "assets"
@@ -423,12 +425,37 @@ def main(argv: list[str] | None = None) -> int:
     vault, salida = Path(opciones.vault), Path(opciones.salida)
     if not opciones.forzar and not _hay_cambios(vault, salida, assets):
         print("Sin cambios en el vault: no regenero.")
+        if opciones.servir:
+            servir(salida, opciones.puerto)
         return 0
 
     print(f"Generando la vista web de {vault} en {salida}...")
     construir(ConfiguracionVisor(vault=vault, salida=salida, assets=assets, base_url=opciones.base_url))
-    print("Listo.")
+    print(f"Listo. {len(_notas_del_vault(vault))} capturas.")
+    if opciones.servir:
+        servir(salida, opciones.puerto)
     return 0
+
+
+def servir(salida: Path, puerto: int = 8000) -> None:
+    """Sirve el sitio generado con la librería estándar.
+
+    Es a propósito: leer el vault en tu computadora no debería requerir nginx, un
+    dominio ni publicar nada. Escucha solo en 127.0.0.1, así que no sale de la
+    máquina; con Ctrl+C se apaga.
+    """
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    if not Path(salida).is_dir():
+        raise FileNotFoundError(f"Todavía no hay sitio generado en {salida}")
+    manejador = partial(SimpleHTTPRequestHandler, directory=str(salida))
+    with ThreadingHTTPServer(("127.0.0.1", puerto), manejador) as servidor:
+        print(f"\nVista web lista: http://localhost:{puerto}\n(Ctrl+C para cortar)\n")
+        try:
+            servidor.serve_forever()
+        except KeyboardInterrupt:
+            print("\nServidor apagado.")
 
 
 if __name__ == "__main__":
