@@ -99,11 +99,13 @@ def _clean_label(value: str) -> str:
     return value.strip(" -–—:.")[:70]
 
 
-def mermaid_tree(title: str, headings: list[tuple[int, str]], *, max_nodes: int = 18) -> str | None:
-    """Diagrama Mermaid de la estructura del documento (Obsidian lo dibuja solo).
+def mermaid_tree(title: str, headings: list[tuple[int, str]], *, max_nodes: int = 12) -> str | None:
+    """Diagrama Mermaid de la estructura del documento.
 
     Devuelve `None` si no hay estructura suficiente: un diagrama con dos nodos
-    sueltos ensucia más de lo que aporta.
+    sueltos ensucia más de lo que aporta. El tope de nodos es bajo a propósito:
+    un documento con sesenta subtítulos produce un mapa ilegible, y para eso ya
+    está el índice de la vista web.
     """
     nodes = [(level, _clean_label(text)) for level, text in headings if _clean_label(text)]
     if len(nodes) < 3:
