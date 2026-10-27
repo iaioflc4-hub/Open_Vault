@@ -234,12 +234,14 @@ def save_video_reference(
         ]
     if on_screen_text:
         lineas += ["## Texto en pantalla (leído de los cuadros)", "", on_screen_text, ""]
-    lineas += [
-        "## Notas",
-        "",
-        "Escribí acá lo que te interesa del video. Para que la transcripción sea "
-        "automática, activá `TRANSCRIPTION_ENGINE` en el `.env`.",
-    ]
+    lineas += ["## Notas", ""]
+    if transcript:
+        lineas.append("Escribí acá lo que te interesa del video.")
+    else:
+        lineas.append(
+            "Escribí acá lo que te interesa del video. Para que la transcripción sea "
+            "automática, activá `TRANSCRIPTION_ENGINE` en el `.env`."
+        )
     content = "\n".join(lineas)
     attachments = [name for name in (thumbnail, local_file) if name]
     metadata = {"platform": host}
