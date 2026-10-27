@@ -108,7 +108,14 @@ fi
 
 # --- 5. Vault --------------------------------------------------------------
 if [ -d "$VAULT_PATH" ]; then
-  log "El vault $VAULT_PATH ya existe: no lo toco"
+  log "El vault $VAULT_PATH ya existe: no toco su contenido"
+  # Si está vacío, el problema es solo de dueño y se arregla acá. Si ya tiene
+  # notas, no se cambia nada: los permisos los define quien lo administra.
+  if [ -z "$(find "$VAULT_PATH" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    chown "$SERVICE_USER:$SERVICE_USER" "$VAULT_PATH"
+    chmod 0750 "$VAULT_PATH"
+    log "Estaba vacío: le asigné el dueño $SERVICE_USER"
+  fi
 else
   log "Creando el vault $VAULT_PATH"
   install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$VAULT_PATH"
