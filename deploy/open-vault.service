@@ -1,0 +1,38 @@
+# Plantilla de unidad systemd. `install.sh` reemplaza __APP_DIR__, __SERVICE_USER__
+# y __VAULT_PATH__ antes de copiarla a /etc/systemd/system/open-vault.service.
+[Unit]
+Description=Open_Vault — captura por Telegram a un vault de Obsidian
+Documentation=https://github.com/iaioflc4-hub/Open_Vault
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=-__APP_DIR__/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__APP_DIR__/.venv/bin/python -m open_vault.bot
+
+Restart=always
+RestartSec=10
+
+# Convive con otros servicios en el mismo servidor: techo de memoria para que
+# nunca sea el que ahogue al resto (una captura de Telegram no necesita más).
+MemoryMax=300M
+MemoryHigh=240M
+
+# Aislamiento: solo puede escribir dentro del vault; el resto del sistema queda
+# de solo lectura para el proceso.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=__VAULT_PATH__
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

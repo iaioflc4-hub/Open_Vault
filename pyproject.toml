@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-vault"
+version = "0.1.0"
+description = "Captura privada por Telegram a un vault de Obsidian, con salida enriquecida en Markdown, SVG, Mermaid y LaTeX."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Open_Vault contributors" }]
+keywords = ["telegram", "obsidian", "markdown", "knowledge-base", "self-hosted"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+dynamic = ["dependencies"]
+
+[project.scripts]
+open-vault = "open_vault.bot:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Una sola fuente de verdad para las dependencias: requirements.txt.
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
