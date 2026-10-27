@@ -296,7 +296,12 @@ datos afuera del vault**.
 
 ## Hacia dónde puede seguir
 
-- Transcripción de video con un proveedor elegido a conciencia (hoy apagada).
+- Un modelo de transcripción más grande si el chico no alcanza
+  (`TRANSCRIPTION_MODEL=base`), a cambio de más memoria.
+- Diarización (quién habla) cuando hay más de una voz: el mismo motor la resuelve
+  y todavía no se usa.
+- Una cola de trabajos para videos largos: hoy el bot transcribe de a uno y, si el
+  video es largo, se hace esperar.
 - Etiquetado y categorización con un modelo, **opcional y con clave propia**,
   dejando intacto el funcionamiento sin IA paga.
 - Segunda puerta de entrada por correo (IMAP de solo lectura) para reenviar mails.
@@ -316,6 +321,10 @@ vaults de Markdown. Lo que se reutilizó, y lo que se evitó a propósito:
 | [Quartz](https://quartz.jzhao.xyz/) | Publica un vault de Obsidian como sitio web | Descartado **acá** solo por la versión de Node del servidor (pide 22): si tenés Node 22+, es la mejor opción para publicar |
 | [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) | Genera el sitio: búsqueda, Mermaid, matemática | **Es el motor de la vista web**: solo se escribió el traductor de formato |
 | [Copyparty](https://github.com/9001/copyparty) | Servidor de archivos con visor y contraseña | Alternativa si preferís navegar la carpeta cruda sin generar un sitio |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Transcripción de audio local con el modelo Whisper, en CPU | **Es el motor de transcripción**: se envuelve, no se reescribe |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | El mismo Whisper en C++, para máquinas más flojas | Plan B si el servidor no da la memoria: acá el motor elegido entra en 404 MB |
+| [Scriberr](https://github.com/rishikanthc/scriberr) | Suite completa de transcripción con interfaz web y diarización | Se descarta **como pieza** por peso (Svelte, FastAPI, Docker); se copia la idea de transcribir sin salir de tu máquina |
+| [transcribe-anything](https://github.com/zackees/transcribe-anything) | Envoltorio multi-motor de Whisper para archivos y URLs | Referencia para probar otro motor sin tocar el código |
 
 Criterio para el resto: nada de n8n, IFTTT ni bases de datos. Cada pieza extra es
 otro lugar donde se puede romper la privacidad, otro consumo de RAM en un VPS
