@@ -11,7 +11,9 @@ Qué se puede mandar:
   - una imagen o captura    -> original guardado + OCR
   - un video (archivo)      -> original local + miniatura, texto en pantalla y
                                transcripción si el motor local está activado
+  - un video redondo o GIF  -> lo mismo que un video (son mp4 igual)
   - un audio o nota de voz  -> el texto transcripto, en la misma máquina
+  - cualquier otra cosa     -> lo dice, en vez de quedarse callado
 """
 from __future__ import annotations
 
@@ -54,8 +56,8 @@ AYUDA = (
     "• *Link de una web*: extrae el texto íntegro, sin resumir, y le agrega la "
     "imagen principal.\n"
     "• *Imagen*: guarda el original y le saca el texto con OCR.\n"
-    "• *Video* (enlace o archivo): guarda la referencia, una miniatura y lo que se "
-    "pueda leer del contenido.\n"
+    "• *Video* (archivo, redondo o GIF): lo guarda, le saca el texto de la imagen y, "
+    "si está encendida, la transcripción.\n"
     "• *Audio o nota de voz*: lo transcribe en la misma máquina y guarda el texto.\n\n"
     "Todo queda en tu vault de Obsidian, sin pasar por servicios de resumen.\n"
     "Usá /id si necesitás ver tu ID de Telegram."
@@ -247,7 +249,10 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await reject_unless_allowed(update, settings):
         return
     message = update.effective_message
-    video = message.video or message.document
+    # Un video redondo (el que se graba en Telegram) y un GIF son mp4 igual que un
+    # video normal: pasan por el mismo camino. Antes se descartaban en silencio,
+    # que es el peor resultado posible para quien los manda.
+    video = message.video or message.video_note or message.animation or message.document
     if not video:
         return
     if video.file_size and video.file_size > settings.max_download_bytes:
@@ -259,6 +264,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     attachment = f"telegram-{video.file_unique_id}{suffix.lower()}"
     target = settings.vault_path / ATTACHMENTS_DIR / attachment
     try:
+        megas = (video.file_size or 0) / 1048576
+        aviso_previo = await message.reply_text(
+            f"Recibí el video ({megas:.1f} MB): lo guardo y le saco el texto y el audio. "
+            "Puede tardar un rato; te aviso cuando termine."
+        )
         with tempfile.TemporaryDirectory(prefix="openvault-") as tmp:
             local = Path(tmp) / f"video{suffix}"
             if not target.exists():
@@ -319,6 +329,10 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             duration=duration,
         )
         await message.reply_text(f"{_saved_reply(note, settings.vault_path)}\n" + " · ".join(avisos))
+        try:
+            await aviso_previo.delete()
+        except Exception:  # noqa: BLE001 - si no se puede borrar, no importa
+            pass
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Video storage failed")
         await message.reply_text(f"No pude guardar el video: {exc}")
@@ -397,6 +411,42 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await message.reply_text(f"No pude procesar el audio: {exc}")
 
 
+async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Último recurso: si no sé leer algo, lo digo.
+
+    Existe porque un mensaje sin manejador se pierde sin dejar rastro: quien lo
+    mandó se queda esperando y del lado del servidor no aparece ningún error.
+    """
+    settings = _settings(context)
+    if not await reject_unless_allowed(update, settings):
+        return
+    message = update.effective_message
+    if message is None:
+        return
+    tipos = [
+        nombre
+        for nombre in (
+            "sticker",
+            "contact",
+            "location",
+            "venue",
+            "poll",
+            "dice",
+            "game",
+            "invoice",
+            "story",
+            "web_app_data",
+        )
+        if getattr(message, nombre, None) is not None
+    ]
+    LOG.info("Mensaje sin manejador (tipo: %s)", ", ".join(tipos) or "desconocido")
+    await message.reply_text(
+        f"Eso todavía no sé leerlo (tipo: {', '.join(tipos) or 'desconocido'}).\n"
+        "Hoy me sirven: texto, links, imágenes, videos (archivo, redondo o GIF), "
+        "audios y notas de voz."
+    )
+
+
 def build_application(settings: Settings) -> Application:
     """Arma la app de Telegram. Separado de `main` para poder testearlo."""
     application = Application.builder().token(settings.bot_token).build()
@@ -405,11 +455,18 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("help", start))
     application.add_handler(CommandHandler("id", show_id))
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
-    application.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
+    application.add_handler(
+        MessageHandler(
+            filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION | filters.Document.VIDEO,
+            handle_video,
+        )
+    )
     application.add_handler(
         MessageHandler(filters.VOICE | filters.AUDIO | filters.Document.AUDIO, handle_voice)
     )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Va último y sin condición de tipo: así ningún mensaje se pierde en silencio.
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_unsupported))
     return application
 
 

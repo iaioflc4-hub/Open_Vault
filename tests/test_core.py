@@ -244,29 +244,99 @@ class BotWiringTests(unittest.TestCase):
         ):
             return build_application(load_settings())
 
-    def test_voice_notes_and_videos_are_attended(self) -> None:
-        from datetime import datetime, timezone
-
-        from telegram import Chat, Message, Update, Voice
+    def manejadores(self, actualizacion: object) -> list:
         from telegram.ext import MessageHandler
 
         aplicacion = self.aplicacion()
-        manejadores = [
+        return [
             manejador
             for grupo in aplicacion.handlers.values()
             for manejador in grupo
-            if isinstance(manejador, MessageHandler) and manejador.filters
+            if isinstance(manejador, MessageHandler)
+            and manejador.filters
+            and manejador.filters.check_update(actualizacion)
         ]
-        chat = Chat(id=7, type=Chat.PRIVATE)
-        base = {"message_id": 1, "date": datetime.now(timezone.utc), "chat": chat}
-        voz = Update(
-            update_id=1,
-            message=Message(voice=Voice(file_id="a", file_unique_id="b", duration=3), **base),
+
+    def casos(self) -> dict:
+        """Un mensaje de cada tipo que la gente manda de verdad."""
+        from datetime import datetime, timezone
+
+        from telegram import (
+            Animation,
+            Chat,
+            Document,
+            Message,
+            PhotoSize,
+            Sticker,
+            Update,
+            Video,
+            VideoNote,
+            Voice,
         )
-        self.assertTrue(
-            [m for m in manejadores if m.filters.check_update(voz)],
-            "ningún manejador atiende notas de voz",
+
+        base = {"message_id": 1, "date": datetime.now(timezone.utc), "chat": Chat(id=7, type=Chat.PRIVATE)}
+        archivo = {"file_id": "a", "file_unique_id": "b"}
+        return {
+            "nota de voz": Update(
+                update_id=1, message=Message(voice=Voice(duration=3, **archivo), **base)
+            ),
+            "video redondo": Update(
+                update_id=2,
+                message=Message(video_note=VideoNote(length=240, duration=5, **archivo), **base),
+            ),
+            "gif": Update(
+                update_id=3,
+                message=Message(
+                    animation=Animation(width=320, height=240, duration=2, **archivo), **base
+                ),
+            ),
+            "video": Update(
+                update_id=4,
+                message=Message(video=Video(width=320, height=240, duration=2, **archivo), **base),
+            ),
+            "video como archivo": Update(
+                update_id=5,
+                message=Message(document=Document(**archivo), **base),
+            ),
+            "foto": Update(
+                update_id=6,
+                message=Message(photo=[PhotoSize(width=100, height=100, **archivo)], **base),
+            ),
+            "texto": Update(update_id=7, message=Message(text="una idea", **base)),
+        }
+
+    def test_cada_tipo_de_mensaje_tiene_manejador(self) -> None:
+        for nombre, actualizacion in self.casos().items():
+            with self.subTest(tipo=nombre):
+                self.assertTrue(self.manejadores(actualizacion), f"nadie atiende: {nombre}")
+
+    def test_lo_que_no_se_entiende_igual_recibe_respuesta(self) -> None:
+        """Un sticker (o cualquier cosa rara) tiene que caer en el último manejador,
+        el que avisa, en vez de perderse en silencio."""
+        from datetime import datetime, timezone
+
+        from telegram import Chat, Message, Sticker, Update
+
+        actualizacion = Update(
+            update_id=9,
+            message=Message(
+                message_id=1,
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=7, type=Chat.PRIVATE),
+                sticker=Sticker(
+                    file_id="a",
+                    file_unique_id="b",
+                    type="regular",
+                    width=100,
+                    height=100,
+                    is_animated=False,
+                    is_video=False,
+                ),
+            ),
         )
+        encontrados = self.manejadores(actualizacion)
+        self.assertEqual(len(encontrados), 1, "un mensaje raro tiene que caer en un solo manejador")
+        self.assertEqual(encontrados[0].callback.__name__, "handle_unsupported")
 
     def test_the_id_command_exists_to_discover_your_own_id(self) -> None:
         from telegram.ext import CommandHandler
