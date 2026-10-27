@@ -88,6 +88,8 @@ nginx que ya tengas, y un temporizador de systemd los regenera cada 5 minutos
 
 ![Nota con estructura y fórmulas](docs/preview-nota.png)
 
+![Nota de una página web: ficha, imagen principal y mapa de la estructura](docs/preview-estructura.png)
+
 Lo único propio es el traductor entre el Markdown de Obsidian y el del generador:
 adjuntos embebidos (`![[Attachments/x.svg]]`), wikilinks, callouts (`> [!info]`)
 y fórmulas. Mermaid y MathJax quedan dentro del repo, así que la vista funciona
