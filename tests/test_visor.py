@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,48 @@ from pathlib import Path
 from open_vault.visor import convertir_markdown
 
 MKDOCS_DISPONIBLE = importlib.util.find_spec("mkdocs") is not None
+
+
+class CambiosTests(unittest.TestCase):
+    def test_rebuilds_when_the_vault_is_newer_than_the_site(self) -> None:
+        from open_vault.visor import _hay_cambios
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            vault = raiz / "vault"
+            vault.mkdir()
+            salida = raiz / "sitio"
+            assets = raiz / "assets"
+            assets.mkdir()
+            self.assertTrue(_hay_cambios(vault, salida, assets), "sin sitio generado hay que construir")
+
+            salida.mkdir()
+            (salida / "index.html").write_text("<html></html>", encoding="utf-8")
+            assets.joinpath("estilo.css").write_text("", encoding="utf-8")
+            self.assertFalse(_hay_cambios(vault, salida, assets), "sin cambios no se regenera")
+
+            nota = vault / "nueva.md"
+            nota.write_text("# Nueva\n", encoding="utf-8")
+            os.utime(nota, (nota.stat().st_mtime + 60, nota.stat().st_mtime + 60))
+            self.assertTrue(_hay_cambios(vault, salida, assets), "una captura nueva dispara el rebuild")
+
+    def test_touching_the_visor_also_triggers_a_rebuild(self) -> None:
+        from open_vault.visor import _hay_cambios
+
+        with tempfile.TemporaryDirectory() as temp:
+            raiz = Path(temp)
+            vault = raiz / "vault"
+            vault.mkdir()
+            salida = raiz / "sitio"
+            salida.mkdir()
+            (salida / "index.html").write_text("<html></html>", encoding="utf-8")
+            assets = raiz / "assets"
+            assets.mkdir()
+            estilo = assets / "estilo.css"
+            estilo.write_text("", encoding="utf-8")
+            futuro = (salida / "index.html").stat().st_mtime + 60
+            os.utime(estilo, (futuro, futuro))
+            self.assertTrue(_hay_cambios(vault, salida, assets))
 
 
 class ConversionTests(unittest.TestCase):

@@ -7,7 +7,9 @@ una imagen o un video, y queda guardado como una nota Markdown **enriquecida**
 Todo el procesamiento pasa en tu propia máquina. **No hay servicios de resumen,
 no hay costo por uso y no hay API key obligatoria.**
 
+[![Pruebas](https://github.com/iaioflc4-hub/Open_Vault/actions/workflows/pruebas.yml/badge.svg)](https://github.com/iaioflc4-hub/Open_Vault/actions/workflows/pruebas.yml)
 ![MIT](https://img.shields.io/badge/licencia-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 
 ## Qué genera
 
@@ -74,15 +76,44 @@ Una sola pieza de software. A propósito **no** usa n8n ni IFTTT: cada servicio
 extra que se suma es otro lugar donde se puede romper la privacidad, otra cosa
 que mantener y otra cosa que hay que replicar para copiar el proyecto.
 
+## Vista web del vault
+
+![Portada de la vista web](docs/preview-portada.png)
+
+Para leer las capturas desde el celular o desde cualquier computadora se genera
+un sitio estático con **MkDocs Material** (libre, con búsqueda, Mermaid y
+matemática). No hay un servicio nuevo escuchando: son archivos HTML que sirve el
+nginx que ya tengas, y un temporizador de systemd los regenera cada 5 minutos
+—solo si el vault cambió—.
+
+![Nota con estructura y fórmulas](docs/preview-nota.png)
+
+Lo único propio es el traductor entre el Markdown de Obsidian y el del generador:
+adjuntos embebidos (`![[Attachments/x.svg]]`), wikilinks, callouts (`> [!info]`)
+y fórmulas. Mermaid y MathJax quedan dentro del repo, así que la vista funciona
+sin depender de ningún CDN y sin pedirle nada a terceros (tampoco tipografías).
+
+```bash
+sudo APP_DIR=/opt/openvault bash install.sh      # instala también la vista web
+sudo bash install.sh --sin-visor                 # solo el bot
+/opt/openvault/.venv-visor/bin/python -m open_vault.visor --forzar   # regenerar ahora
+```
+
+Dónde publicarla es decisión tuya: una ruta de tu servidor web con contraseña
+(nginx), un puerto propio, o nada público y leerla por túnel SSH. El sitio usa
+**rutas relativas**, así que funciona igual en la raíz del dominio o dentro de
+una subcarpeta; si querés fijar la URL canónica, exportá `VISOR_BASE_URL`.
+
 ## Requisitos
 
 - Linux con Python 3.11 o superior (probado en Debian 13).
 - Un token de bot de Telegram (gratis, con [@BotFather](https://t.me/BotFather)).
 - Opcional: `tesseract-ocr` para el OCR y `ffmpeg` para las miniaturas.
   `install.sh` los instala si faltan.
-- Recursos: anda en un VPS de 1 vCPU y 1 GB de RAM. El vault ya existente en el
-  servidor de referencia ocupa menos de 1 MB por cada 100 capturas de texto; las
-  imágenes y las miniaturas son lo único que crece.
+- Recursos medidos en el servidor de referencia (1 vCPU, 965 MB de RAM, 9.8 GB de
+disco): el bot y la vista web juntos ocupan unos 200 MB de disco y el servicio
+del bot queda con un techo de 300 MB de memoria. El vault crece con las
+imágenes: menos de 1 MB por cada 100 capturas de texto.
 
 ## Instalación
 
@@ -122,6 +153,8 @@ python -m open_vault.bot
 | `OCR_LANGUAGE` | `spa+eng` | Idiomas de Tesseract |
 | `FETCH_MAIN_IMAGE` | `true` | Bajar la imagen principal de las páginas |
 | `VIDEO_THUMBNAILS` | `true` | Sacar miniatura de los videos (necesita ffmpeg) |
+| `VISOR_SALIDA` | `/var/www/openvault-web` | Carpeta donde se genera la vista web |
+| `VISOR_BASE_URL` | vacío | URL canónica del sitio, si lo publicás en un subdominio |
 
 ## Uso
 
@@ -171,6 +204,26 @@ datos afuera del vault**.
 - Etiquetado y categorización con un modelo, **opcional y con clave propia**,
   dejando intacto el funcionamiento sin IA paga.
 - Segunda puerta de entrada por correo (IMAP de solo lectura) para reenviar mails.
+
+## Proyectos parecidos (y qué se tomó de cada uno)
+
+Esto no salió de cero: hay bastante camino hecho alrededor de Telegram y los
+vaults de Markdown. Lo que se reutilizó, y lo que se evitó a propósito:
+
+| Proyecto | Qué aporta | Qué se hizo acá |
+| --- | --- | --- |
+| [Paulius0112/ObsidianLinkBot](https://github.com/Paulius0112/ObsidianLinkBot) | Bot que extrae artículos de una URL a notas Markdown | Se toma la idea y se suma la parte visual, el OCR y la vista web |
+| [danzansho/obsidian-voice-bot](https://github.com/danzansho/obsidian-voice-bot) | Notas de voz por Telegram con transcripción | Referencia para el día que se active la transcripción |
+| [mlyxz/telegram-to-obsidian](https://github.com/mlyxz/telegram-to-obsidian) | Reenvía mensajes a la nota diaria | Muestra lo mínimo que se puede hacer; acá se prioriza el enriquecido |
+| [Vault Telegram Bridge](https://community.obsidian.md/plugins/vault-telegram-bridge) y [Telegram Sync](https://www.obsidianstats.com/plugins/telegram-sync) | Capturan **dentro** de Obsidian, sin servidor | Alternativa válida si no querés VPS: la contra es que necesita Obsidian abierto |
+| [Witral](https://forum.obsidian.md/t/witral-a-self-hosted-ingestion-framework-whatsapp-markdown-drive-sync-native-compatibility-with-obsidian-and-other-pkms/110425) | Framework de ingesta (WhatsApp, Drive, Markdown) | Confirma el diseño: Markdown en disco como formato neutral |
+| [Quartz](https://quartz.jzhao.xyz/) | Publica un vault de Obsidian como sitio web | Descartado **acá** solo por la versión de Node del servidor (pide 22): si tenés Node 22+, es la mejor opción para publicar |
+| [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) | Genera el sitio: búsqueda, Mermaid, matemática | **Es el motor de la vista web**: solo se escribió el traductor de formato |
+| [Copyparty](https://github.com/9001/copyparty) | Servidor de archivos con visor y contraseña | Alternativa si preferís navegar la carpeta cruda sin generar un sitio |
+
+Criterio para el resto: nada de n8n, IFTTT ni bases de datos. Cada pieza extra es
+otro lugar donde se puede romper la privacidad, otro consumo de RAM en un VPS
+chico y otro paso que hay que replicar para copiar el proyecto.
 
 ## Licencia
 

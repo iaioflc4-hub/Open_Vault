@@ -352,12 +352,20 @@ extra:
 """
 
 
-def _hay_cambios(vault: Path, salida: Path) -> bool:
+def _hay_cambios(vault: Path, salida: Path, assets: Path) -> bool:
+    """¿Hay que regenerar? Se mira el vault y también el propio visor.
+
+    Sin lo segundo, actualizar el traductor o los estilos dejaría el sitio viejo
+    para siempre, porque el vault no cambió.
+    """
     marca = salida / "index.html"
     if not marca.is_file():
         return True
     momento = marca.stat().st_mtime
-    return any(nota.stat().st_mtime > momento for nota in _notas_del_vault(vault))
+    if any(nota.stat().st_mtime > momento for nota in _notas_del_vault(vault)):
+        return True
+    piezas = [Path(__file__), *(assets / nombre for nombre in ARCHIVOS_DE_LA_VISTA), *(assets / nombre for nombre in ASSETS_REMOTOS)]
+    return any(pieza.is_file() and pieza.stat().st_mtime > momento for pieza in piezas)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     vault, salida = Path(opciones.vault), Path(opciones.salida)
-    if not opciones.forzar and not _hay_cambios(vault, salida):
+    if not opciones.forzar and not _hay_cambios(vault, salida, assets):
         print("Sin cambios en el vault: no regenero.")
         return 0
 
