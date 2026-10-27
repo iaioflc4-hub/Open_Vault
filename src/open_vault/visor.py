@@ -301,6 +301,9 @@ site_dir: {salida.as_posix()}
 theme:
   name: material
   language: es
+  # Sin tipografías de Google: el sitio no debe pedirle nada a un tercero, ni
+  # necesitar internet para verse bien.
+  font: false
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
