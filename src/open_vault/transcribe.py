@@ -47,7 +47,13 @@ def available(name: str | None = None) -> bool:
 
 
 def _limit_memory() -> None:
-    """Tope de memoria del proceso hijo. 0 o vacío = sin tope."""
+    """Tope de memoria del proceso hijo. 0 o vacío = sin tope.
+
+    Ojo: las librerías de cálculo reservan mucha memoria *virtual* de entrada, así
+    que un tope ajustado puede hacer que el motor ni arranque ("mkl_malloc: failed
+    to allocate memory"). Por eso viene apagado: la protección normal es mirar
+    cuánta memoria libre hay antes de transcribir.
+    """
     import resource
 
     limite_mb = int(os.getenv("TRANSCRIPTION_MEMORY_MB", "0") or 0)
@@ -55,6 +61,27 @@ def _limit_memory() -> None:
         return
     limite = limite_mb * 1024 * 1024
     resource.setrlimit(resource.RLIMIT_AS, (limite, limite))
+
+
+def memoria_libre_mb() -> int | None:
+    """Memoria disponible del sistema, o None si no se puede leer."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as info:
+            for linea in info:
+                if linea.startswith("MemAvailable:"):
+                    return int(linea.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _hay_memoria_para_transcribir() -> tuple[bool, int | None]:
+    """¿Conviene arrancar ahora? Un modelo de 1 GB de memoria no puede con dos trabajos."""
+    minimo = int(os.getenv("TRANSCRIPTION_MIN_FREE_MB", "450"))
+    disponible = memoria_libre_mb()
+    if disponible is None:
+        return True, None
+    return disponible >= minimo, disponible
 
 
 def transcribe(audio_path: Path, *, language: str = "es", model: str = "tiny") -> str:
@@ -66,6 +93,12 @@ def transcribe(audio_path: Path, *, language: str = "es", model: str = "tiny") -
         raise RuntimeError("TRANSCRIPTION_ENGINE está vacío: la transcripción está apagada")
     if not available():
         raise RuntimeError("El motor de transcripción no está instalado (pip install faster-whisper)")
+    hay_memoria, disponible = _hay_memoria_para_transcribir()
+    if not hay_memoria:
+        raise RuntimeError(
+            f"Quedan {disponible} MB de memoria libre y la transcripción necesita unos 450 MB "
+            "para no arrastrar al resto de los servicios. Probá de nuevo en un rato."
+        )
     resultado = subprocess.run(
         [
             sys.executable,

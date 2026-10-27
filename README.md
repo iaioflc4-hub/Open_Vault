@@ -209,7 +209,7 @@ Transcribe el audio de los videos **en la misma máquina**: nada se sube a ning�
 servicio. Son dos pasos:
 
 ```bash
-/opt/openvault/.venv/bin/pip install faster-whisper   # 80 MB, una sola vez
+/opt/openvault/.venv/bin/pip install faster-whisper   # 350 MB de dependencias, una vez
 ```
 
 ```ini
@@ -217,13 +217,18 @@ servicio. Son dos pasos:
 TRANSCRIPTION_ENGINE=faster-whisper
 TRANSCRIPTION_MODEL=tiny        # tiny es el más liviano; base o small mejoran la calidad
 TRANSCRIPTION_LANGUAGE=es
-TRANSCRIPTION_MEMORY_MB=600     # tope de memoria del proceso
 ```
 
-La transcripción corre en un proceso aparte, con tiempo máximo y tope de
-memoria, y el video se guarda igual si el motor falla o tarda demasiado. En
-1 vCPU el modelo `tiny` va a varias veces más rápido que el tiempo real, así que
-un video de 2 minutos se resuelve en menos de un minuto.
+Medido en el servidor de referencia (1 vCPU, 965 MB de RAM), con el modelo `tiny`:
+4 segundos de audio se transcriben en **2 segundos** y el pico de memoria es de
+**404 MB**. La primera vez baja el modelo (75 MB) a `TRANSCRIPTION_CACHE`.
+
+La transcripción corre en un proceso aparte, con tiempo máximo, y el video se
+guarda igual si el motor falla o tarda demasiado. Antes de arrancar se fija
+cuánta memoria libre hay: si queda menos que `TRANSCRIPTION_MIN_FREE_MB` (450 MB),
+no transcribe y te lo dice por Telegram, en vez de dejar sin memoria al resto de
+los servicios. Mientras transcribe, el bot atiende un mensaje por vez, así que un
+video largo se hace esperar.
 
 ## Configuración
 
