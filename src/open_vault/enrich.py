@@ -110,7 +110,9 @@ def mermaid_tree(title: str, headings: list[tuple[int, str]], *, max_nodes: int 
     nodes = [(level, _clean_label(text)) for level, text in headings if _clean_label(text)]
     if len(nodes) < 3:
         return None
-    root = _clean_label(title) or "Nota"
+    # El nodo central es un círculo: un título de 120 caracteres se sale del
+    # dibujo. Se recorta, y el título completo sigue en la nota.
+    root = _clean_label(title)[:38].strip() or "Nota"
     lines = ["```mermaid", "mindmap", f"  root(({root}))"]
     base_level = min(level for level, _ in nodes)
     kept = 0
