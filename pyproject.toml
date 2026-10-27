@@ -20,8 +20,13 @@ classifiers = [
 ]
 dynamic = ["dependencies"]
 
+[project.optional-dependencies]
+# Solo para la vista web (`open-vault-visor`). El bot no lo necesita.
+visor = ["mkdocs-material>=9.5,<10"]
+
 [project.scripts]
 open-vault = "open_vault.bot:main"
+open-vault-visor = "open_vault.visor:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

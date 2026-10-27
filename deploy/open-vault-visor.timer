@@ -1,0 +1,11 @@
+[Unit]
+Description=Regenera la vista web de Open_Vault cada 5 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=open-vault-visor.service
+
+[Install]
+WantedBy=timers.target

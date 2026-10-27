@@ -1,0 +1,14 @@
+Archivos de terceros que usa la vista web del vault.
+
+Se copian acá a propósito (en vez de pedirlos a un CDN cada vez) para que la
+vista funcione sin internet y sin que el navegador de quien la lee hable con
+terceros. Los baja `open-vault-visor --bajar-assets` o el propio build si faltan.
+
+mermaid.min.js      Mermaid 11.4.1  - MIT - https://github.com/mermaid-js/mermaid
+tex-mml-chtml.js    MathJax 3.2.2   - Apache-2.0 - https://github.com/mathjax/MathJax
+
+Archivos propios de Open_Vault (misma licencia MIT del proyecto):
+
+config-mathjax.js   delimitadores que acepta el renderizador de fórmulas
+iniciar.js          arranque de Mermaid
+estilo.css          ajustes de la portada y de las imágenes

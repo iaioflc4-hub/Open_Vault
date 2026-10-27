@@ -1,0 +1,42 @@
+/* Estilo mínimo de la vista web. La estética de cada captura ya la trae la
+   ficha SVG que genera Open_Vault; acá solo se la acomoda. */
+
+.md-typeset img,
+.md-typeset svg {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+/* Portada: una tarjeta por captura, usando su ficha como imagen. */
+.ov-tarjetas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.ov-tarjeta {
+  display: block;
+  border-radius: 14px;
+  overflow: hidden;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ov-tarjeta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.ov-tarjeta img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+}
+
+/* Los bloques de Mermaid ocupan el ancho disponible y se centran. */
+.md-typeset .mermaid {
+  text-align: center;
+}

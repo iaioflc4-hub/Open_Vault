@@ -14,18 +14,24 @@
 #   sudo APP_DIR=/opt/mi-vault bash install.sh
 #   sudo SERVICE_USER=mi-usuario VAULT_PATH=/home/mi-usuario/vault bash install.sh
 #   sudo bash install.sh --sin-apt        # no intenta instalar tesseract/ffmpeg
+#   sudo bash install.sh --sin-visor      # sin vista web (solo el bot)
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/openvault}"
 SERVICE_USER="${SERVICE_USER:-openvault}"
 VAULT_PATH="${VAULT_PATH:-/srv/obsidian/Open_Vault}"
+VISOR_SALIDA="${VISOR_SALIDA:-/var/www/openvault-web}"
 REPO_URL="${REPO_URL:-https://github.com/iaioflc4-hub/Open_Vault.git}"
 UNIT_PATH="/etc/systemd/system/open-vault.service"
+UNIT_VISOR="/etc/systemd/system/open-vault-visor.service"
+UNIT_TIMER="/etc/systemd/system/open-vault-visor.timer"
 INSTALAR_APT=1
+INSTALAR_VISOR=1
 
 for arg in "$@"; do
   case "$arg" in
     --sin-apt) INSTALAR_APT=0 ;;
+    --sin-visor) INSTALAR_VISOR=0 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Opción desconocida: $arg" >&2; exit 2 ;;
   esac
@@ -136,8 +142,30 @@ fi
 chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR/.env"
 chmod 600 "$APP_DIR/.env"
 
-# --- 7. Servicio systemd ---------------------------------------------------
-log "Instalando la unidad systemd"
+# --- 7. Vista web (opcional) -----------------------------------------------
+if [ "$INSTALAR_VISOR" -eq 1 ]; then
+  log "Armando el entorno de la vista web (MkDocs Material)"
+  [ -d "$APP_DIR/.venv-visor" ] || "$PYTHON_BIN" -m venv "$APP_DIR/.venv-visor"
+  "$APP_DIR/.venv-visor/bin/python" -m pip install --quiet --upgrade pip
+  "$APP_DIR/.venv-visor/bin/python" -m pip install --quiet -e "$APP_DIR[visor]"
+  "$APP_DIR/.venv-visor/bin/python" -m open_vault.visor --bajar-assets || warn "No se pudieron bajar Mermaid/MathJax; la vista web fallará hasta que haya red."
+  install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$VISOR_SALIDA"
+
+  sed -e "s|__APP_DIR__|$APP_DIR|g" \
+      -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
+      -e "s|__VAULT_PATH__|$VAULT_PATH|g" \
+      -e "s|__VISOR_OUTPUT__|$VISOR_SALIDA|g" \
+      "$APP_DIR/deploy/open-vault-visor.service" > "$UNIT_VISOR"
+  cp "$APP_DIR/deploy/open-vault-visor.timer" "$UNIT_TIMER"
+  systemctl daemon-reload
+  systemctl enable --quiet open-vault-visor.timer
+  systemctl start open-vault-visor.timer
+  log "Generando la primera versión de la vista web"
+  systemctl start open-vault-visor.service || warn "La primera generación falló; mirá: journalctl -u open-vault-visor"
+fi
+
+# --- 8. Servicio systemd ---------------------------------------------------
+log "Instalando la unidad del bot"
 sed -e "s|__APP_DIR__|$APP_DIR|g" \
     -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
     -e "s|__VAULT_PATH__|$VAULT_PATH|g" \
@@ -167,5 +195,6 @@ Falta lo único que no se puede automatizar: tu token de Telegram.
 
 El vault queda en:  $VAULT_PATH
 Para leerlo: abrí esa carpeta con Obsidian (o cualquier editor de Markdown).
+Vista web (se regenera sola cada 5 minutos):  $VISOR_SALIDA
 PASOS
 fi

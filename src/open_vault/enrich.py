@@ -23,7 +23,7 @@ OPERATOR_RE = re.compile(r"[+\-*/×÷]")
 LETTER_RE = re.compile(r"[A-Za-z]")
 
 
-def _looks_like_math(candidate: str) -> bool:
+def looks_like_math(candidate: str) -> bool:
     """¿El texto entre dólares es una fórmula y no un precio?
 
     `\\frac{a}{b}` o `x^2` o `a = b` sí. `5 - 10` (un rango de precios) no,
@@ -180,7 +180,7 @@ def math_blocks(text: str, *, limit: int = 8) -> list[str]:
         blocks.extend(match.group(1).strip() for match in pattern.finditer(text))
     for match in INLINE_MATH_RE.finditer(text):
         candidate = match.group(1).strip()
-        if _looks_like_math(candidate):
+        if looks_like_math(candidate):
             blocks.append(candidate)
 
     unique: list[str] = []

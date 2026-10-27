@@ -1,0 +1,28 @@
+# Plantilla de unidad systemd para la vista web. `install.sh` reemplaza
+# __APP_DIR__, __SERVICE_USER__, __VAULT_PATH__ y __VISOR_OUTPUT__.
+#
+# No queda ningún proceso escuchando: es un build de archivos estáticos que nginx
+# ya sabe servir. El temporizador (open-vault-visor.timer) lo dispara cada 5
+# minutos y el propio build no hace nada si el vault no cambió.
+[Unit]
+Description=Open_Vault — regenera la vista web del vault
+Documentation=https://github.com/iaioflc4-hub/Open_Vault
+
+[Service]
+Type=oneshot
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=-__APP_DIR__/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__APP_DIR__/.venv-visor/bin/python -m open_vault.visor --vault __VAULT_PATH__ --salida __VISOR_OUTPUT__
+
+# Es un generador de archivos, no un servicio: se le pone techo y se lo aísla.
+MemoryMax=400M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=__VISOR_OUTPUT__
+ProtectKernelTunables=true
+ProtectControlGroups=true
