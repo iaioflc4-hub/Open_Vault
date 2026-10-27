@@ -7,7 +7,9 @@ el VPS o en una notebook, y quien replique el proyecto solo necesita su token.
 Qué se puede mandar:
   - texto suelto            -> nota enriquecida
   - una URL de página       -> texto íntegro + imagen principal + estructura
-  - una URL de video        -> referencia, miniatura si hay ffmpeg
+  - una URL de video        -> ficha (título, canal, duración, descripción), miniatura,
+                               subtítulos o transcripción del audio
+  - un PDF                  -> texto completo y OCR de las páginas si es un escaneo
   - una imagen o captura    -> original guardado + OCR
   - un video (archivo)      -> original local + miniatura, texto en pantalla y
                                transcripción si el motor local está activado
@@ -27,8 +29,10 @@ from urllib.parse import urlparse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+from .classify import classify_or
 from .config import Settings, load_settings
 from .extract import download_image, extract_page, validate_public_http_url
+from .links import fetch_video_link
 from .media import (
     extract_audio,
     ffmpeg_available,
@@ -40,9 +44,10 @@ from .media import (
     video_frames,
     video_thumbnail,
 )
+from .pdf import pdf_available, read_pdf
 from .transcribe import available as transcription_available
 from .transcribe import transcribe
-from .vault import ATTACHMENTS_DIR, save_note, save_text_note, save_video_reference
+from .vault import ATTACHMENTS_DIR, save_document, save_note, save_text_note, save_video_reference
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 LOG = logging.getLogger("open_vault")
@@ -55,6 +60,9 @@ AYUDA = (
     "• *Texto*: lo guarda como nota (con estructura, cifras y etiquetas).\n"
     "• *Link de una web*: extrae el texto íntegro, sin resumir, y le agrega la "
     "imagen principal.\n"
+    "• *Link de un video* (YouTube, Instagram…): guarda la ficha real y, si se puede, "
+    "los subtítulos o la transcripción.\n"
+    "• *PDF*: guarda el archivo y le saca el texto; si es un escaneo, le hace OCR.\n"
     "• *Imagen*: guarda el original y le saca el texto con OCR.\n"
     "• *Video* (archivo, redondo o GIF): lo guarda, le saca el texto de la imagen y, "
     "si está encendida, la transcripción.\n"
@@ -139,17 +147,7 @@ async def _save_url(message, url: str, original_text: str, settings: Settings) -
         await message.reply_text(f"No puedo abrir esa URL: {exc}")
         return
     if is_video_url(url):
-        try:
-            path = await asyncio.to_thread(
-                save_video_reference, settings.vault_path, title=urlparse(url).netloc or "Video", source=url
-            )
-            await message.reply_text(
-                f"{_saved_reply(path, settings.vault_path)}\n"
-                "Transcripción pendiente: no se envió el video a ningún servicio externo."
-            )
-        except Exception as exc:  # noqa: BLE001
-            LOG.exception("Video reference failed")
-            await message.reply_text(f"No pude guardar la referencia del video: {exc}")
+        await _save_video_link(message, url, settings)
         return
 
     try:
@@ -181,6 +179,85 @@ async def _save_url(message, url: str, original_text: str, settings: Settings) -
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Note saving failed")
         await message.reply_text(f"No pude guardar esa página: {exc}")
+
+
+async def _save_video_link(message, url: str, settings: Settings) -> None:
+    """Enlace de video: ficha real, subtítulos y, si hace falta, transcripción del audio.
+
+    Un link de video no es un enlace para guardar: es contenido para leer. Por eso
+    se busca la ficha, los subtítulos y —si no hay— se baja el audio y se traduce a
+    texto acá adentro, sin que nada salga de la máquina.
+    """
+    aviso = None
+    try:
+        aviso = await message.reply_text("Link de video recibido: busco el contenido…")
+        detalle: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="openvault-link-") as tmp:
+            trabajo = Path(tmp)
+            info = await asyncio.to_thread(fetch_video_link, url, trabajo)
+            transcript = info.transcript
+            transcript_source = info.transcript_source
+
+            if not transcript and info.audio_path is not None:
+                if transcription_available(settings.transcription_engine):
+                    wav = trabajo / "audio.wav"
+                    if await asyncio.to_thread(extract_audio, info.audio_path, wav):
+                        try:
+                            transcript = await asyncio.to_thread(
+                                transcribe,
+                                wav,
+                                language=settings.transcription_language,
+                                model=settings.transcription_model,
+                            )
+                            transcript_source = "transcripción local del audio"
+                        except Exception as exc:  # noqa: BLE001 - la nota se guarda igual
+                            LOG.warning("Link transcription failed: %s", exc)
+                            info.note += f" · no pude transcribir: {exc}"
+                else:
+                    info.note += " · el audio se bajó pero la transcripción está apagada"
+
+            thumbnail = None
+            if settings.fetch_main_image and info.thumbnail_url:
+                thumbnail = await _download_main_image(info.thumbnail_url, info.url or url, settings)
+
+            titulo = (message.caption or "").strip() or info.title or urlparse(url).netloc or "Video"
+            note = await asyncio.to_thread(
+                save_video_reference,
+                settings.vault_path,
+                title=titulo[:MAX_TITLE],
+                source=info.url or url,
+                thumbnail=thumbnail,
+                transcript=transcript or None,
+                transcript_source=(transcript_source or None),
+                duration=info.duration,
+                uploader=info.uploader or None,
+                description=info.description or None,
+            )
+        detalle.append(f"categoría: {ruta_categoria(note, settings.vault_path)}")
+        if info.duration:
+            detalle.append(f"{info.duration:.0f} s")
+        detalle.append(f"transcripción: {transcript_source}" if transcript else "sin transcripción")
+        if info.note:
+            detalle.append(info.note)
+        await message.reply_text(f"{_saved_reply(note, settings.vault_path)}\n" + " · ".join(detalle))
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Video link failed")
+        await message.reply_text(f"No pude leer ese video: {exc}")
+    finally:
+        if aviso is not None:
+            try:
+                await aviso.delete()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def ruta_categoria(note: Path, vault: Path) -> str:
+    """Categoría de la nota recién guardada, para contarla en la respuesta."""
+    try:
+        partes = note.relative_to(vault).parts
+    except ValueError:
+        return "?"
+    return partes[1] if len(partes) > 2 else (partes[0] if partes else "?")
 
 
 async def _download_main_image(image_url: str, page_url: str, settings: Settings) -> str | None:
@@ -233,7 +310,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             content=body,
             source=f"telegram://photo/{photo.file_unique_id}",
             kind="image-ocr",
-            category="Imágenes",
+            category=classify_or(f"{text}\n{caption}", "Imágenes", title=caption),
             attachments=[attachment],
             hero=attachment,
         )
@@ -402,13 +479,84 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             content=cuerpo,
             source=f"telegram://voice/{media.file_unique_id}",
             kind="audio",
-            category="Audios",
+            category=classify_or(f"{texto}\n{caption}", "Audios", title=caption),
             attachments=[attachment],
         )
         await message.reply_text(f"{_saved_reply(nota, settings.vault_path)}\n{aviso}")
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Voice capture failed")
         await message.reply_text(f"No pude procesar el audio: {exc}")
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """PDF: se guarda el original y se le saca el texto; si es un escaneo, se lee con OCR."""
+    settings = _settings(context)
+    if not await reject_unless_allowed(update, settings):
+        return
+    message = update.effective_message
+    documento = message.document
+    if documento is None:
+        return
+    if documento.file_size and documento.file_size > settings.max_download_bytes:
+        await message.reply_text(
+            "El documento pasa el límite de Telegram (los bots bajan hasta 20 MB). "
+            "Mandaló comprimido, por partes o como link."
+        )
+        return
+    nombre = getattr(documento, "file_name", "") or "documento.pdf"
+    sufijo = Path(nombre).suffix.lower() or ".pdf"
+    attachment = f"telegram-{documento.file_unique_id}{sufijo}"
+    target = settings.vault_path / ATTACHMENTS_DIR / attachment
+    aviso = None
+    try:
+        aviso = await message.reply_text("PDF recibido: le saco el texto…")
+        with tempfile.TemporaryDirectory(prefix="openvault-pdf-") as tmp:
+            trabajo = Path(tmp)
+            origen = trabajo / Path(nombre).name
+            if target.exists():
+                origen.write_bytes(target.read_bytes())
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tg_file = await context.bot.get_file(documento.file_id)
+                await tg_file.download_to_drive(origen)
+                target.write_bytes(origen.read_bytes())
+
+            if not pdf_available():
+                await message.reply_text(
+                    "No tengo con qué leer PDF en el servidor (falta `pypdf` o `poppler-utils`)."
+                )
+                return
+            texto, texto_ocr, paginas = await asyncio.to_thread(
+                read_pdf, origen, trabajo / "paginas", language=settings.ocr_language
+            )
+
+        titulo = (message.caption or "").strip() or Path(nombre).stem[:MAX_TITLE]
+        nota = await asyncio.to_thread(
+            save_document,
+            settings.vault_path,
+            title=titulo,
+            content=texto,
+            source=f"telegram://document/{documento.file_unique_id}",
+            attachments=[attachment],
+            scanned_text=texto_ocr or None,
+            page_count=paginas,
+        )
+        partes = [f"categoría: {ruta_categoria(nota, settings.vault_path)}"]
+        if paginas:
+            partes.append(f"{paginas} páginas")
+        partes.append(f"{len(texto)} caracteres de texto" if texto else "sin texto seleccionable")
+        if texto_ocr:
+            partes.append("con OCR de las páginas")
+        await message.reply_text(f"{_saved_reply(nota, settings.vault_path)}\n" + " · ".join(partes))
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Document capture failed")
+        await message.reply_text(f"No pude leer el documento: {exc}")
+    finally:
+        if aviso is not None:
+            try:
+                await aviso.delete()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -442,8 +590,8 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
     LOG.info("Mensaje sin manejador (tipo: %s)", ", ".join(tipos) or "desconocido")
     await message.reply_text(
         f"Eso todavía no sé leerlo (tipo: {', '.join(tipos) or 'desconocido'}).\n"
-        "Hoy me sirven: texto, links, imágenes, videos (archivo, redondo o GIF), "
-        "audios y notas de voz."
+        "Hoy me sirven: texto, links (web, YouTube, Instagram…), imágenes, videos "
+        "(archivo, redondo o GIF), audios, notas de voz y PDF."
     )
 
 
@@ -464,6 +612,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(
         MessageHandler(filters.VOICE | filters.AUDIO | filters.Document.AUDIO, handle_voice)
     )
+    application.add_handler(MessageHandler(filters.Document.PDF, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     # Va último y sin condición de tipo: así ningún mensaje se pierde en silencio.
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_unsupported))

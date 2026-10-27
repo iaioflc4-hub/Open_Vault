@@ -24,6 +24,8 @@ dynamic = ["dependencies"]
 # Solo para la vista web (`open-vault-visor`). El bot no lo necesita.
 visor = ["mkdocs-material>=9.5,<10"]
 transcription = ["faster-whisper>=1.2"]
+links = ["yt-dlp>=2025.1"]
+pdf = ["pypdf>=5.0"]
 
 [project.scripts]
 open-vault = "open_vault.bot:main"

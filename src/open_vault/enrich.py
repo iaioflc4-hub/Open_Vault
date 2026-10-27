@@ -201,8 +201,26 @@ def _strip_accents(value: str) -> str:
     return "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
 
 
+HASHTAG_RE = re.compile(r"#([\wáéíóúüñÁÉÍÓÚÜÑ][\wáéíóúüñÁÉÍÓÚÜÑ-]{1,29})", re.UNICODE)
+
+
+def hashtags(text: str, *, limit: int = 8) -> list[str]:
+    """Etiquetas escritas a mano con `#`. Son las que más valen: las eligió alguien."""
+    vistas: list[str] = []
+    for match in HASHTAG_RE.finditer(text or ""):
+        etiqueta = match.group(1).casefold()
+        if etiqueta not in vistas:
+            vistas.append(etiqueta)
+        if len(vistas) >= limit:
+            break
+    return vistas
+
+
 def tags(text: str, *, limit: int = 6) -> list[str]:
-    """Etiquetas por frecuencia, sin listas negras de temas: solo palabras útiles."""
+    """Etiquetas por frecuencia, sin listas negras de temas: solo palabras útiles.
+
+    Las que escribió la persona con `#` van primero y no se repiten.
+    """
     counts: dict[str, int] = {}
     order: dict[str, int] = {}
     for index, match in enumerate(WORD_RE.finditer(text)):
@@ -212,7 +230,8 @@ def tags(text: str, *, limit: int = 6) -> list[str]:
         counts[word] = counts.get(word, 0) + 1
         order.setdefault(word, index)
     ranked = sorted(counts.items(), key=lambda item: (-item[1], order[item[0]]))
-    return [word for word, count in ranked[:limit] if count >= 1]
+    elegidas = [word for word, count in ranked[:limit] if count >= 1]
+    return list(dict.fromkeys([*hashtags(text, limit=limit), *elegidas]))[: limit + 4]
 
 
 def stats(text: str) -> Stats:

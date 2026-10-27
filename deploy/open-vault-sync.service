@@ -1,0 +1,15 @@
+[Unit]
+Description=Open_Vault — clasificación, enlaces y subida del vault a GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__VAULT_PATH__
+Environment=APP_DIR=__APP_DIR__
+Environment=VAULT_PATH=__VAULT_PATH__
+Environment=PYTHONUNBUFFERED=1
+Environment=GIT_SSH_COMMAND=ssh -i /etc/openvault/vault-deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new
+ExecStart=/bin/bash __APP_DIR__/deploy/open-vault-sync.sh

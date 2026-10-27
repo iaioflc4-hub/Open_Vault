@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .classify import classify
+from .classify import classify, classify_or
 from .enrich import Figure, key_figures, math_blocks, mermaid_tree, outline, stats, tags
 from .svg import bars_svg, card_svg, color_for, format_number
 
@@ -54,6 +54,17 @@ def render_attachment(name: str) -> str:
     if suffix in VIDEO_SUFFIXES:
         return f"![[{relative}]]"
     return f"[[{relative}]]"
+
+
+def folder_for_category(vault: Path, category: str) -> Path:
+    """Carpeta de una categoría, creándola si no existe.
+
+    La usan tanto el guardado como la reclasificación: si cada uno armara la ruta
+    a su manera, una nota podría terminar en dos carpetas distintas del mismo tema.
+    """
+    folder = Path(vault) / "Categorías" / _slug(category)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def _write_asset(folder: Path, filename: str, content: str) -> str:
@@ -97,8 +108,7 @@ def save_note(
     formulas = math_blocks(content)
     headings = outline(content)
 
-    folder = vault / "Categorías" / _slug(category)
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = folder_for_category(vault, category)
     base = f"{now:%Y-%m-%d}-{_slug(title)}-{_source_id(source)}"
     path = folder / f"{base}.md"
 
@@ -203,12 +213,18 @@ def save_video_reference(
     transcript: str | None = None,
     on_screen_text: str | None = None,
     duration: float | None = None,
+    uploader: str | None = None,
+    description: str | None = None,
+    transcript_source: str | None = None,
 ) -> Path:
     """Video: referencia, miniatura si hay ffmpeg y lo que se pudo leer del contenido.
 
-    `transcript` viene de la transcripción local del audio y `on_screen_text` del
-    OCR de los cuadros. No se envía el video a ningún servicio externo: eso solo
-    pasaría si alguien configura un proveedor de transcripción a propósito.
+    `transcript` viene de los subtítulos o de la transcripción local del audio, y
+    `on_screen_text` del OCR de los cuadros. No se envía el video a ningún servicio
+    externo: eso solo pasaría si alguien configura un proveedor a propósito.
+
+    La categoría sale del contenido (título, canal, descripción, transcripción), no
+    del formato: un video sobre Linux va a Tecnología, no a "Videos".
     """
     host = urlparse(source).netloc
     lineas = [
@@ -217,13 +233,20 @@ def save_video_reference(
         f"- URL original: {source}",
         f"- Plataforma/dominio: {host}",
     ]
+    if uploader:
+        lineas.append(f"- Canal/autor: {uploader}")
     if local_file:
         lineas.append(f"- Archivo local: {local_file}")
     if duration:
         lineas.append(f"- Duración: {_duracion_texto(duration)}")
     lineas.append("")
+    if description:
+        lineas += ["## Descripción original", "", description, ""]
     if transcript:
-        lineas += ["## Transcripción", "", transcript, ""]
+        titulo_transcripcion = "## Transcripción"
+        if transcript_source:
+            titulo_transcripcion += f" ({transcript_source})"
+        lineas += [titulo_transcripcion, "", transcript, ""]
     else:
         lineas += [
             "## Transcripción pendiente",
@@ -247,15 +270,61 @@ def save_video_reference(
     metadata = {"platform": host}
     if duration:
         metadata["duration_seconds"] = round(duration, 1)
+    if uploader:
+        metadata["uploader"] = uploader
+    if transcript_source:
+        metadata["transcript_source"] = transcript_source
+    categoria = classify_or(
+        "\n".join([description or "", transcript or "", on_screen_text or ""]),
+        "Videos",
+        title=f"{title} {description or ''}",
+    )
     return save_note(
         vault,
         title=title,
         content=content,
         source=source,
         kind="video",
-        category="Videos",
+        category=categoria,
         attachments=attachments,
         hero=thumbnail,
+        note_metadata=metadata,
+    )
+
+
+def _titulo_legible(texto: str, *, limite: int = 600) -> str:
+    """Primeras líneas del texto, que es lo que mejor define el tema de un documento."""
+    return "\n".join(linea for linea in texto.splitlines() if linea.strip())[:limite]
+
+
+def save_document(
+    vault: Path,
+    *,
+    title: str,
+    content: str,
+    source: str,
+    attachments: list[str] | None = None,
+    scanned_text: str | None = None,
+    page_count: int | None = None,
+    default_category: str = "Documentos",
+    kind: str = "pdf",
+) -> Path:
+    """Documento (PDF, presentación, planilla): texto completo y OCR si es un escaneo."""
+    cuerpo = content.strip() or "Sin texto seleccionable (documento escaneado o solo imágenes)."
+    if scanned_text:
+        cuerpo += f"\n\n## Texto reconocido de las páginas (OCR)\n\n{scanned_text}"
+    metadata = {"pages": page_count} if page_count else None
+    categoria = classify_or(
+        f"{_titulo_legible(content)}\n{scanned_text or ''}", default_category, title=title
+    )
+    return save_note(
+        vault,
+        title=title,
+        content=cuerpo,
+        source=source,
+        kind=kind,
+        category=categoria,
+        attachments=attachments,
         note_metadata=metadata,
     )
 
@@ -267,8 +336,11 @@ def save_text_note(vault: Path, *, title: str, content: str, source: str) -> Pat
 
 __all__ = [
     "ATTACHMENTS_DIR",
+    "folder_for_category",
     "render_attachment",
+    "save_document",
     "save_note",
     "save_text_note",
     "save_video_reference",
 ]
+
