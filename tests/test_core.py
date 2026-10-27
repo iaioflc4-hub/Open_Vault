@@ -232,6 +232,57 @@ class VaultTests(unittest.TestCase):
             self.assertNotIn("Pendiente de configurar", saved)
 
 
+class BotWiringTests(unittest.TestCase):
+    """Que cada tipo de mensaje tenga quien lo atienda: una nota de voz ignorada en
+    silencio es el peor resultado posible (el usuario cree que la mandó)."""
+
+    def aplicacion(self):
+        from open_vault.bot import build_application
+
+        with patch("open_vault.config.load_dotenv"), patch.dict(
+            os.environ, {"BOT_TOKEN": "123:abc", "ALLOWED_TELEGRAM_USER_IDS": "7"}, clear=True
+        ):
+            return build_application(load_settings())
+
+    def test_voice_notes_and_videos_are_attended(self) -> None:
+        from datetime import datetime, timezone
+
+        from telegram import Chat, Message, Update, Voice
+        from telegram.ext import MessageHandler
+
+        aplicacion = self.aplicacion()
+        manejadores = [
+            manejador
+            for grupo in aplicacion.handlers.values()
+            for manejador in grupo
+            if isinstance(manejador, MessageHandler) and manejador.filters
+        ]
+        chat = Chat(id=7, type=Chat.PRIVATE)
+        base = {"message_id": 1, "date": datetime.now(timezone.utc), "chat": chat}
+        voz = Update(
+            update_id=1,
+            message=Message(voice=Voice(file_id="a", file_unique_id="b", duration=3), **base),
+        )
+        self.assertTrue(
+            [m for m in manejadores if m.filters.check_update(voz)],
+            "ningún manejador atiende notas de voz",
+        )
+
+    def test_the_id_command_exists_to_discover_your_own_id(self) -> None:
+        from telegram.ext import CommandHandler
+
+        aplicacion = self.aplicacion()
+        comandos = [
+            comando
+            for grupo in aplicacion.handlers.values()
+            for manejador in grupo
+            if isinstance(manejador, CommandHandler)
+            for comando in manejador.commands
+        ]
+        self.assertIn("id", comandos)
+        self.assertIn("start", comandos)
+
+
 class PageContentTests(unittest.TestCase):
     def test_page_content_holds_metadata(self) -> None:
         page = PageContent(url="https://example.org/a", title="T", text="cuerpo", site_name="example.org")

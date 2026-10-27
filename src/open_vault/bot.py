@@ -11,6 +11,7 @@ Qué se puede mandar:
   - una imagen o captura    -> original guardado + OCR
   - un video (archivo)      -> original local + miniatura, texto en pantalla y
                                transcripción si el motor local está activado
+  - un audio o nota de voz  -> el texto transcripto, en la misma máquina
 """
 from __future__ import annotations
 
@@ -54,7 +55,8 @@ AYUDA = (
     "imagen principal.\n"
     "• *Imagen*: guarda el original y le saca el texto con OCR.\n"
     "• *Video* (enlace o archivo): guarda la referencia, una miniatura y lo que se "
-    "pueda leer del contenido.\n\n"
+    "pueda leer del contenido.\n"
+    "• *Audio o nota de voz*: lo transcribe en la misma máquina y guarda el texto.\n\n"
     "Todo queda en tu vault de Obsidian, sin pasar por servicios de resumen.\n"
     "Usá /id si necesitás ver tu ID de Telegram."
 )
@@ -322,6 +324,79 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await message.reply_text(f"No pude guardar el video: {exc}")
 
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Audio o nota de voz: se guarda el original y, si hay motor, su transcripción."""
+    settings = _settings(context)
+    if not await reject_unless_allowed(update, settings):
+        return
+    message = update.effective_message
+    media = message.voice or message.audio or message.document
+    if media is None:
+        return
+    if media.file_size and media.file_size > settings.max_download_bytes:
+        await message.reply_text("El audio supera el límite de tamaño configurado.")
+        return
+
+    suffix = Path(getattr(media, "file_name", "") or ".oga").suffix or ".oga"
+    attachment = f"telegram-{media.file_unique_id}{suffix.lower()}"
+    target = settings.vault_path / ATTACHMENTS_DIR / attachment
+    motor_listo = transcription_available(settings.transcription_engine)
+    try:
+        if motor_listo:
+            await message.reply_text("Audio recibido: lo estoy transcribiendo en el servidor…")
+        with tempfile.TemporaryDirectory(prefix="openvault-") as tmp:
+            trabajo = Path(tmp)
+            origen = trabajo / f"audio{suffix}"
+            if target.exists():
+                origen.write_bytes(target.read_bytes())
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tg_file = await context.bot.get_file(media.file_id)
+                await tg_file.download_to_drive(origen)
+                target.write_bytes(origen.read_bytes())
+
+            texto = ""
+            aviso = "No pude transcribir el audio."
+            if not settings.transcription_engine:
+                aviso = "Transcripción apagada (TRANSCRIPTION_ENGINE vacío): guardé el audio igual."
+            elif not motor_listo:
+                aviso = "El motor de transcripción no está instalado: guardé el audio igual."
+            else:
+                wav = trabajo / "audio.wav"
+                if not await asyncio.to_thread(extract_audio, origen, wav):
+                    aviso = "No pude leer el audio (¿falta ffmpeg?): guardé el archivo igual."
+                else:
+                    try:
+                        texto = await asyncio.to_thread(
+                            transcribe,
+                            wav,
+                            language=settings.transcription_language,
+                            model=settings.transcription_model,
+                        )
+                        aviso = "Transcripción lista." if texto else "El audio no tenía voz reconocible."
+                    except Exception as exc:  # noqa: BLE001 - el audio se guarda igual
+                        LOG.warning("Voice transcription failed: %s", exc)
+                        aviso = f"No pude transcribir: {exc}"
+
+        caption = (message.caption or "").strip()
+        title = caption or _title_from_text(texto, f"Audio del {message.date:%Y-%m-%d}")
+        cuerpo = texto or f"> [!warning] Sin transcripción\n> {aviso}"
+        nota = await asyncio.to_thread(
+            save_note,
+            settings.vault_path,
+            title=title,
+            content=cuerpo,
+            source=f"telegram://voice/{media.file_unique_id}",
+            kind="audio",
+            category="Audios",
+            attachments=[attachment],
+        )
+        await message.reply_text(f"{_saved_reply(nota, settings.vault_path)}\n{aviso}")
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Voice capture failed")
+        await message.reply_text(f"No pude procesar el audio: {exc}")
+
+
 def build_application(settings: Settings) -> Application:
     """Arma la app de Telegram. Separado de `main` para poder testearlo."""
     application = Application.builder().token(settings.bot_token).build()
@@ -331,6 +406,9 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("id", show_id))
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
     application.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
+    application.add_handler(
+        MessageHandler(filters.VOICE | filters.AUDIO | filters.Document.AUDIO, handle_voice)
+    )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return application
 

@@ -262,6 +262,9 @@ video largo se hace esperar.
   que se tiran después de leerlos). Si encendés `TRANSCRIPTION_ENGINE`, se le
   suma la transcripción del audio, hecha en la misma máquina. Si es un link, queda
   la referencia: no se descarga el video de YouTube ni de ningún otro sitio.
+- **Audio o nota de voz**: se guarda el archivo y, con el motor de transcripción
+  encendido, el texto. El audio de Telegram llega en `.oga`, así que se convierte
+  con ffmpeg antes de transcribir (nada sale de la máquina).
 - **`/id`**: muestra tu ID numérico de Telegram.
 
 ## Privacidad y límites
